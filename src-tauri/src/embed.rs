@@ -13,10 +13,6 @@
 /// The frontend, embedded at compile time.
 pub const INDEX_HTML: &str = include_str!("../assets/index.html");
 
-/// The URL the window is pointed at. Custom-scheme URLs on Linux/Windows look
-/// like `http://app.localhost/…`, so this is a real URL, not a bare string.
-pub const URL: &str = "http://app.localhost/";
-
 /// The IPC bridge. Without it the page cannot reach a single command: the app
 /// would look alive and do nothing, which is worse than not starting.
 const BRIDGE_JS: &str = r#"

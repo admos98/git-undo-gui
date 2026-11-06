@@ -1,17 +1,19 @@
 name: Compile check
 
-# The desktop executor is the one part of this project that cannot be tested in a
-# browser, and it was written on a machine with no Rust toolchain. This workflow
-# exists so a rustc actually sees the code on every push: it is the project's
-# compiler, not a formality.
+# The desktop executor is the one part of this project a browser cannot test, and
+# it was written on a machine with no Rust toolchain. This workflow makes GitHub
+# the project's compiler rather than a formality: on any push touching src-tauri
+# it runs clippy with -D warnings, builds the release binary, and measures it.
 #
-# Anything that fails here is echoed as a check annotation, so the error text is
-# readable from the API (and by a coding agent) without downloading job logs.
+# Failures are re-emitted as check annotations (scripts/ci/annotate.py) because
+# job logs live on storage that is not always reachable — the annotation is the
+# error message, on the line that caused it.
 on:
   push:
     branches: [main, "arena/**"]
     paths:
       - "src-tauri/**"
+      - "scripts/**"
       - ".github/workflows/compile-check.yml"
   pull_request:
     paths:
@@ -40,8 +42,7 @@ jobs:
         working-directory: src-tauri/logic
         run: |
           set -o pipefail
-          cargo build --no-default-features 2>&1 | tee /tmp/build.log
-          cargo build 2>&1 | tee -a /tmp/build.log
+          { cargo build --no-default-features && cargo build; } 2>&1 | tee /tmp/build.log
 
       - name: Tests
         working-directory: src-tauri/logic
@@ -55,41 +56,32 @@ jobs:
           set -o pipefail
           cargo clippy --no-default-features --all-targets -- -D warnings 2>&1 | tee -a /tmp/build.log
 
+      # rustfmt cannot be run where this code was written, so instead of failing
+      # the job forever it publishes a patch. Apply it locally with
+      #   git apply rustfmt.patch
       - name: Formatting
+        id: fmt
         working-directory: src-tauri/logic
         run: |
-          set -o pipefail
-          cargo fmt --check 2>&1 | tee -a /tmp/build.log
+          if cargo fmt --check > /tmp/fmt.log 2>&1; then
+            echo "already formatted"
+            exit 0
+          fi
+          cargo fmt
+          git diff > rustfmt.patch
+          echo "::error::rustfmt reformatted $(grep -c '^Diff in ' /tmp/fmt.log) block(s) — apply src-tauri/logic/rustfmt.patch"
+          exit 1
 
-      - name: Publish any failure as an annotation
+      - name: Publish diagnostics
         if: failure()
-        run: |
-          python3 - <<'PY'
-          import re
+        run: python3 scripts/ci/annotate.py /tmp/build.log
 
-          log = open("/tmp/build.log", encoding="utf-8", errors="replace").read()
-
-          def esc(text):
-              return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-
-          # Keep the diagnostic blocks, drop the "Compiling ..." progress noise.
-          blocks = re.split(r"(?m)^(?=error(?:\[|:)|warning: unused)", log)
-          picked = [b.rstrip() for b in blocks if b.strip()]
-
-          lines = []
-          for block in picked:
-              head = block.splitlines()[0]
-              where = re.search(r"--> ([^:]+):(\d+):(\d+)", block)
-              if where:
-                  lines.append(f"::error file={where.group(1)},line={where.group(2)},col={where.group(3)}::{esc(block[:6000])}")
-              else:
-                  lines.append(f"::error::{esc(block[:6000])}")
-
-          if not lines:
-              lines = [f"::error::{esc(log[-6000:])}"]
-
-          print("\n".join(lines))
-          PY
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: rustfmt-patch
+          path: src-tauri/logic/rustfmt.patch
+          if-no-files-found: ignore
 
   # Full crate: needs the webview headers, and the frontend must exist because
   # tauri::generate_context! embeds it at compile time.
@@ -120,8 +112,7 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - name: Sync the embedded page
-        run: node scripts/embed-web.mjs
+      - run: node scripts/embed-web.mjs
       - name: Embedded copy matches dist
         run: node scripts/embed-web.mjs --check
 
@@ -144,27 +135,6 @@ jobs:
             exit 1
           fi
 
-      - name: Publish any failure as an annotation
+      - name: Publish diagnostics
         if: failure()
-        run: |
-          python3 - <<'PY'
-          import re
-
-          log = open("/tmp/shell.log", encoding="utf-8", errors="replace").read()
-
-          def esc(text):
-              return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-
-          blocks = re.split(r"(?m)^(?=error(?:\[|:)|warning)", log)
-          picked = [b.rstrip() for b in blocks if b.strip().startswith(("error", "warning"))]
-          lines = []
-          for block in picked:
-              where = re.search(r"--> ([^:]+):(\d+):(\d+)", block)
-              if where:
-                  lines.append(f"::error file=src-tauri/{where.group(1)},line={where.group(2)},col={where.group(3)}::{esc(block[:6000])}")
-              else:
-                  lines.append(f"::error::{esc(block[:6000])}")
-          if not lines:
-              lines = [f"::error::{esc(log[-6000:])}"]
-          print("\n".join(lines))
-          PY
+        run: python3 scripts/ci/annotate.py /tmp/shell.log

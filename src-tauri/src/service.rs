@@ -138,8 +138,7 @@ pub fn reset(
         .unwrap_or_default();
 
     // ---- guard: a refusal happens before anything is written ----
-    let risks = assess(&state, &kind, ack, &previous_head, target)
-        .map_err(|reason| GitError::refused(reason))?;
+    let risks = assess(&state, &kind, ack, &previous_head, target).map_err(GitError::refused)?;
 
     // ---- backup first, always ----
     let (backup_branch, created) = match kind {
