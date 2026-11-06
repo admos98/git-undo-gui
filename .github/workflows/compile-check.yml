@@ -69,7 +69,21 @@ jobs:
           fi
           cargo fmt
           git diff > rustfmt.patch
-          echo "::error::rustfmt reformatted $(grep -c '^Diff in ' /tmp/fmt.log) block(s) — apply src-tauri/logic/rustfmt.patch"
+          python3 - <<'PY'
+          # Publish the patch itself as annotations. Artifacts and job logs both
+          # live on storage that is not always reachable; annotations are.
+          patch = open("rustfmt.patch", encoding="utf-8").read()
+          if not patch.strip():
+              print("::error::cargo fmt produced no diff, but --check failed")
+              raise SystemExit(0)
+          size = 4000
+          parts = [patch[i:i + size] for i in range(0, len(patch), size)]
+          for index, part in enumerate(parts, start=1):
+              escaped = (part.replace("%", "%25")
+                             .replace("\r", "%0D")
+                             .replace("\n", "%0A"))
+              print(f"::error::RUSTFMT-PATCH {index}/{len(parts)}%0A{escaped}")
+          PY
           exit 1
 
       - name: Publish diagnostics
