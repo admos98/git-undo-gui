@@ -113,7 +113,29 @@ pub fn assess(
         ));
     }
 
-    // 6. Soft/Files still deserve a heads-up about a dirty tree.
+    // 6a. A destructive reset does not delete untracked files, but it is the one
+    //     thing people are most surprised by afterwards ("did I just lose my
+    //     notes?"). Say it plainly rather than leaving it to be discovered.
+    if kind.is_destructive() {
+        let survivors: Vec<&str> = state
+            .dirty
+            .iter()
+            .filter(|f| !destroyed_by_hard_reset(f))
+            .map(|f| f.path.as_str())
+            .collect();
+        if !survivors.is_empty() {
+            risks.push(Risk {
+                level: "info",
+                message: format!(
+                    "{} untracked file(s) such as {} are not touched by this reset and stay on disk.",
+                    survivors.len(),
+                    survivors.first().copied().unwrap_or("")
+                ),
+            });
+        }
+    }
+
+    // 6b. Soft/Files still deserve a heads-up about a dirty tree.
     if !kind.is_destructive() && state.is_dirty() {
         risks.push(Risk {
             level: "warn",
@@ -195,7 +217,26 @@ mod tests {
             ..clean()
         };
         let risks = assess(&state, &ResetKind::Hard, Some("RESET"), "f82a91c", "a43c821").unwrap();
-        assert!(risks.iter().any(|r| r.level == "warn" || r.level == "info"));
+        // Refusing would be wrong (nothing is lost), staying silent would be worse.
+        let note = risks.iter().find(|r| r.level == "info").expect("a survivor note");
+        assert!(note.message.contains("notes.md"), "{}", note.message);
+    }
+
+    #[test]
+    fn survivor_notes_never_list_files_that_are_actually_lost() {
+        // A hard reset refuses on destroyed files, so this only proves the note
+        // itself is filtered correctly when both kinds are present at once.
+        let state = RepoState {
+            dirty: vec![
+                DirtyFile { status: "untracked".into(), path: "notes.md".into() },
+                DirtyFile { status: "M ".into(), path: "src/a.ts".into() },
+            ],
+            dirty_count: 2,
+            ..clean()
+        };
+        let err = assess(&state, &ResetKind::Hard, Some("RESET"), "f82a91c", "a43c821").unwrap_err();
+        assert!(err.contains("src/a.ts"), "{err}");
+        assert!(!err.contains("notes.md"), "{err}");
     }
 
     #[test]
