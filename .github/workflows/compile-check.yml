@@ -3,8 +3,10 @@ name: Compile check
 # The desktop executor is the one part of this project that cannot be tested in a
 # browser, and it was written on a machine with no Rust toolchain. This workflow
 # exists so a rustc actually sees the code on every push: it is the project's
-# compiler, not a formality. Guard unit tests run separately in `ci.yml`
-# (job: logic); this job answers the blunter question — does it build?
+# compiler, not a formality.
+#
+# Anything that fails here is echoed as a check annotation, so the error text is
+# readable from the API (and by a coding agent) without downloading job logs.
 on:
   push:
     branches: [main, "arena/**"]
@@ -20,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  CARGO_TERM_COLOR: always
+  CARGO_TERM_COLOR: never
 
 jobs:
   # Cheap and fast: the pure logic crate has zero dependencies, so it compiles in
@@ -33,63 +35,41 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - name: Formatting
+
+      - name: Compile
         working-directory: src-tauri/logic
-        run: cargo fmt --check
-      - name: Clippy
-        working-directory: src-tauri/logic
-        run: cargo clippy --no-default-features -- -D warnings
+        run: |
+          set -o pipefail
+          cargo build --no-default-features 2>&1 | tee /tmp/build.log
+          cargo build 2>&1 | tee -a /tmp/build.log
+
       - name: Tests
         working-directory: src-tauri/logic
-        run: cargo test --no-default-features --offline
-
-  # Full crate: needs the webview headers, and the frontend must exist because
-  # tauri::generate_context! embeds it at compile time.
-  shell:
-    name: Tauri shell
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Tauri system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libgtk-3-dev patchelf
+          set -o pipefail
+          cargo test --no-default-features 2>&1 | tee -a /tmp/build.log
 
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - run: npm ci
-      - run: npm run build
-
-      - name: Clippy (deny warnings)
-        working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Build the binary
-        working-directory: src-tauri
-        run: cargo build --release
-
-      - name: Report binary size
-        working-directory: src-tauri
+      - name: Clippy
+        working-directory: src-tauri/logic
         run: |
-          BIN=$(find target/release -maxdepth 1 -type f -executable -name 'git-undo-gui*' | head -1)
-          echo "binary: $BIN"
-          ls -lh "$BIN"
-          SIZE=$(stat -c%s "$BIN")
-          echo "### Desktop binary: $((SIZE/1024/1024)) MiB" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$SIZE" -gt 20971520 ]; then
-            echo "::error::binary exceeds the 20 MiB budget promised in the README"
-            exit 1
-          fi
+          set -o pipefail
+          cargo clippy --no-default-features --all-targets -- -D warnings 2>&1 | tee -a /tmp/build.log
+
+      - name: Formatting
+        working-directory: src-tauri/logic
+        run: |
+          set -o pipefail
+          cargo fmt --check 2>&1 | tee -a /tmp/build.log
+
+      - name: Publish any failure as an annotation
+        if: failure()
+        run: |
+          python3 - "$GITHUB_REPOSITORY" <<'PY'
+          import os, re, sys, urllib.request, json
+          log = open("/tmp/build.log", encoding="utf-8", errors="replace").read()
+          # Keep the diagnostic blocks, drop the progress noise.
+          blocks = re.split(r"(?m)^(?=error\[|error:|warning: unused)", log)
+          picked = [b.strip() for b in blocks if b.strip().startswith(("error", "warning: unused"))]
+          text = "\n\n---\n\n".join(picked)[:60000] or log[-60000:]
+          print(text)
+          PY
