@@ -125,7 +125,10 @@ jobs:
         working-directory: src-tauri
         run: |
           set -o pipefail
-          cargo test --lib -- --test-threads=1 2>&1 | tee -a /tmp/shell.log
+          cargo test --lib -- --test-threads=1 2>&1 | tee -a /tmp/shell.log || {
+            python3 ../scripts/ci/annotate.py /tmp/shell.log
+            exit 1
+          }
           RAN=$(awk '/^test result: ok\./ {s += $4} END {print s+0}' /tmp/shell.log)
           echo "::notice::library tests executed: $RAN"
           if [ "$RAN" -lt 10 ]; then

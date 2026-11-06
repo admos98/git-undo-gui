@@ -20,12 +20,26 @@ def esc(text: str) -> str:
     return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
+COMPILER = ("error", "warning", "Diff in")
+
+# "---- guard::tests::foo stdout ----" ... up to the next header or the summary.
+TEST_FAILURE = re.compile(
+    r"(?ms)^---- (\S+) stdout ----\n(.*?)(?=^---- |\n^failures:$|\n^test result:)"
+)
+
+
 def blocks(log: str):
     """Split a cargo log into diagnostic blocks worth annotating."""
+    # Compiler diagnostics first: they carry file/line information.
     parts = re.split(r"(?m)^(?=error(?:\[|:)|warning(?:\[|:)|Diff in )", log)
     for part in parts:
-        if part.lstrip().startswith(("error", "warning", "Diff in")):
+        if part.lstrip().startswith(COMPILER):
             yield part.rstrip()
+
+    # Then failing tests, which have no file/line of their own.
+    for match in TEST_FAILURE.finditer(log):
+        name, body = match.group(1), match.group(2).rstrip()
+        yield f"test {name} FAILED\n{body}"
 
 
 def locate(block: str):
