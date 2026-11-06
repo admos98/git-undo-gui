@@ -7,15 +7,21 @@
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
 > **Turn `git reflog` into a safe, visual "undo" workflow with side-by-side diff preview.**
-> Tokyo Night dark mode. Single self-contained `index.html`. No git command is ever executed for you — the app generates the command, you review it, you paste it.
+> Tokyo Night dark mode. Single self-contained `index.html`.
+
+**The point of the app is the reset.** You point at the snapshot you want back, choose how aggressive the reset
+should be (`--soft`, a rescue branch, file-only restore, or `--hard`), type `UNDO`, and get the exact command to run.
+It is a *reset planner with a diff preview*, not a log viewer: everything else — the timeline, the diff panel, the
+push helper, the incident report — exists to make that one decision safe.
 
 ### 📌 Demo Status — please read
 
-**This is a viewer and a safe command generator.** It does **not** run git, does not open a repository, and does not shell out to anything. It parses the reflog / `git log -p` / `git show` text that *you* paste in, shows you what each entry means with real per-file diffs, and writes the exact command you'd need. You stay in control of your terminal.
+**It plans a reset; it does not execute one.** This is a reset planner and a safe command generator. It does **not** run git, does not open a repository, and does not shell out to anything. It parses the reflog / `git log -p` / `git show` text that *you* paste in, shows you what each entry means with real per-file diffs, and writes the exact command you'd need. You stay in control of your terminal.
 
 - Sample data is 6 hand-written entries, clearly labelled **DEMO MODE** in the titlebar.
 - Data you import is labelled **REFLOG** or **GIT LOG** and stays in your browser's `localStorage` only.
-- The safe undo flow is labelled **Demo Undo (simulated)** — it copies a command, nothing more.
+- The undo button always says **UNDO TO THIS SNAPSHOT** and always ends in "copies the reset command — run it in
+  your terminal". In demo mode the same flow runs against sample data and is labelled **simulated**.
 
 ---
 
@@ -154,8 +160,9 @@ CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 - **No network surface**: CSP `default-src 'none'` with `connect-src 'none'`, no remote
   script/style/img/font, and no `fetch`/XHR in the code. Your pasted reflog never leaves
   the tab.
-- **No shell**: the app cannot read a repository or run git. It parses text and emits a
-  command for *you* to review.
+- **No shell**: the app cannot read a repository or run git. It parses text and emits a reset
+  command for *you* to review. A static file has no access to your repo, and a browser tab should never be able to run
+  `reset --hard`.
 - **No injection**: every user-derived string is escaped before it reaches `innerHTML`;
   a regression test pastes `<img onerror>` / `<script>` payloads and asserts nothing executes.
 - **Persisted locally**: `localStorage` only, capped at 200k chars, and the app tells you

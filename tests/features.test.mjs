@@ -45,6 +45,51 @@ suite.test("restore strategy targets file contents only", async () => {
   return restore === "git restore --source=e44f55f -- ." || restore;
 });
 
+suite.test("the undo button says UNDO in both modes (reset is the point)", async () => {
+  const demo = await boot(SEEN);
+  demo.app("loadDemoData(true)");
+  const demoLabel = demo.text("btn-big-undo-label");
+
+  const imported = await boot({ ...SEEN, "git-undo-imported-reflog": "a44f55f HEAD@{0}: reset: moving to HEAD~3", "git-undo-import-mode": "reflog" });
+  const importedLabel = imported.text("btn-big-undo-label");
+  const outcome = imported.d.getElementById("undo-outcome").textContent;
+
+  return demoLabel === "UNDO TO THIS SNAPSHOT" &&
+    importedLabel === "UNDO TO THIS SNAPSHOT" &&
+    /copies the reset command/.test(outcome) || `demo="${demoLabel}" imported="${importedLabel}" outcome="${outcome}"`;
+});
+
+suite.test("every strategy computes a reset-family command and explains it", async () => {
+  const { app, d } = await boot({ ...SEEN, "git-undo-imported-reflog": "e44f55f HEAD@{0}: reset: moving to HEAD~3", "git-undo-import-mode": "reflog" });
+  const seen = {};
+  for (const st of ["soft", "branch", "restore", "hard"]) {
+    app(`updateStrategy('${st}')`);
+    seen[st] = {
+      cmd: d.getElementById("generated-command").textContent,
+      why: d.getElementById("command-plain-english").textContent,
+    };
+  }
+  const checks = [
+    seen.soft.cmd === "git reset --soft e44f55f",
+    seen.branch.cmd === "git branch rescue-e44f55f e44f55f",
+    seen.restore.cmd === "git restore --source=e44f55f -- .",
+    seen.hard.cmd === "git reset --hard e44f55f",
+    Object.values(seen).every(v => v.why.length > 30),
+  ];
+  return checks.every(Boolean) || JSON.stringify(seen);
+});
+
+suite.test("the push helper is secondary, collapsed, and below the main action", async () => {
+  const { app, d } = await boot(SEEN);
+  app("loadDemoData(true)");
+  const panel = d.getElementById("push-panel");
+  const deck = d.getElementById("panel-right");
+  const order = [...deck.querySelectorAll("#btn-big-undo, #push-panel")].map(el => el.id);
+  return panel.tagName === "DETAILS" &&
+    panel.open === false &&
+    order.join(",") === "btn-big-undo,push-panel" || `tag=${panel.tagName} open=${panel.open} order=${order}`;
+});
+
 suite.test("the safest strategy is the default", async () => {
   const { app } = await boot(SEEN);
   app("loadDemoData(true)");
