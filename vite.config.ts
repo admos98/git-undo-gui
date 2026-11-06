@@ -1,22 +1,35 @@
-import tailwindcss from '@tailwindcss/vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from "vite";
+import path from "node:path";
 
-export default defineConfig(() => {
-  return {
-    plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
+/**
+ * The app is ONE static file: index.html with inlined CSS and JS.
+ * There is no React, no runtime Tailwind plugin, no framework entry point —
+ * Vite is only here to serve/build that single document for convenience.
+ *
+ * Styling is compiled ahead of time by `npm run css:build`
+ * (src/tailwind.css -> inlined into index.html), so the output stays offline.
+ */
+export default defineConfig({
+  root: __dirname,
+  appType: "mpa",
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    rollupOptions: {
+      input: { index: path.resolve(__dirname, "index.html") },
     },
-    server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify—file watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
-    },
-  };
+  },
+  server: {
+    port: 3000,
+    host: "0.0.0.0",
+    // The sandbox preview proxies requests under a *.e2b.app host; allow it.
+    allowedHosts: true,
+    hmr: process.env.DISABLE_HMR !== "true",
+    watch: process.env.DISABLE_HMR === "true" ? null : {},
+  },
+  preview: {
+    port: 4173,
+    host: "0.0.0.0",
+    allowedHosts: true,
+  },
 });

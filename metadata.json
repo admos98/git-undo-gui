@@ -1,6 +1,0 @@
-{
-  "name": "git-undo-gui",
-  "description": "Visual Git Undo Button — Turn git reflog into a safe, visual time machine with side-by-side diff preview and one-click undo.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

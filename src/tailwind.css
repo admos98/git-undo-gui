@@ -1,0 +1,22 @@
+/*
+  Tailwind entry point for git-undo-gui.
+  The build inlines the compiled output into index.html between the
+  TAILWIND_INLINE_START / TAILWIND_INLINE_END markers, so the shipped file
+  has zero network dependencies and stays a single double-clickable artifact.
+*/
+@import "tailwindcss";
+
+@source "../index.html";
+
+/* Pull in the classes the app builds dynamically via template strings. */
+@source inline("bg-[#24283b] text-white font-medium cursor-pointer px-2 py-0.5 rounded");
+@source inline("text-[#565f89] hover:bg-[#24283b] cursor-pointer px-2 py-0.5 rounded");
+@source inline("text-[#565f89] hover:text-[#c0caf5] cursor-pointer px-2 py-0.5 rounded");
+@source inline("bg-[#292e42] text-[#7dcfff] border border-[#7dcfff]/30 px-2 py-0.5 rounded transition cursor-pointer font-mono");
+@source inline("px-5 py-2 text-xs font-bold rounded-lg transition bg-[#9ece6a] text-[#16161e] hover:brightness-110 cursor-pointer shadow-lg shadow-[#9ece6a]/30 flex items-center gap-1.5 animate-pulse");
+@source inline("px-5 py-2 text-xs font-bold rounded-lg transition opacity-40 cursor-not-allowed bg-[#24283b] text-[#565f89] flex items-center gap-1.5");
+@source inline("px-2 py-1 text-xs rounded bg-[#16161e] text-[#565f89] border border-[#292e42] hover:bg-[#24283b] transition cursor-pointer");
+@source inline("p-8 text-center text-xs text-[#565f89]");
+@source inline("bg-[#f7768e]/15 text-[#f7768e] border-[#f7768e]/30 bg-[#1a1b26] hover:bg-[#1f2335] border-transparent");
+@source inline("bg-[#bb9af7]/15 text-[#bb9af7] border-[#bb9af7]/30 bg-[#9ece6a]/15 text-[#9ece6a] border-[#9ece6a]/30");
+@source inline("bg-[#24283b] border-[#7dcfff] text-white p-3 transition-colors cursor-pointer border-l-2 relative");

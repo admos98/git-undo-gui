@@ -1,18 +1,25 @@
-# git-undo-gui — Visual Git Undo Button & Time Machine ⏪
+# git-undo-gui — Visual Git Undo Button & Reflog Time Machine ⏪
 
-[![GitHub Stars](https://img.shields.io/badge/stars-2.4k-yellow?style=for-the-badge&logo=github)](https://github.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-9ece6a?style=for-the-badge)](index.html)
-[![Bundle Size](https://img.shields.io/badge/bundle%20size-%3C50KB-7dcfff?style=for-the-badge)](index.html)
-[![Tauri Ready](https://img.shields.io/badge/Tauri-Desktop%20Ready-bb9af7?style=for-the-badge&logo=tauri)](https://tauri.app)
-[![Offline First](https://img.shields.io/badge/offline-100%25-orange?style=for-the-badge)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
+[![Bundle size](https://img.shields.io/badge/index.html-133%20KB%20(28%20KB%20CSS%20inlined)-7dcfff)](index.html)
+[![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
+[![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
-> **Turn `git reflog` into a pretty, safe "Undo Last Push" button with side-by-side diff preview.**  
-> Crafted in Tokyo Night dark mode. No accidental disasters. Zero real git commands executed without your explicit review.
+> **Turn `git reflog` into a safe, visual "undo" workflow with side-by-side diff preview.**
+> Tokyo Night dark mode. Single self-contained `index.html`. No git command is ever executed for you — the app generates the command, you review it, you paste it.
+
+### 📌 Demo Status — please read
+
+**This is a visual demo and a safe command generator.** It does **not** run git, does not open a repository, and does not shell out to anything. It parses reflog text that *you* paste in, shows you what each entry means, and writes the exact command you'd need. You stay in control of your terminal.
+
+- Sample data is clearly labelled **DEMO MODE** in the titlebar.
+- Data you import is labelled **IMPORTED** and stays in your browser's `localStorage` only.
+- The safe undo flow is labelled **Demo Undo (simulated)** — it copies a command, nothing more.
 
 ---
 
-## 📽️ 15-Second Demo Preview
+## 📽️ The 15-Second Demo
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -31,100 +38,92 @@
 └────────────────────┴──────────────────────────────────────┴────────────────────────────┘
 ```
 
-> **How to Record Your Own 15-sec Demo GIF:**
-> 1. Double click `index.html` in your browser (or run via Tauri).
-> 2. Press `t` on your keyboard (or click the top **"15s Demo Tour"** button).
-> 3. The built-in automated director will choreograph a 15-second sequence: highlights the disaster `reset --hard`, inspects the restored word-level diff, pulses the Safe Undo button, auto-types `UNDO` into the safety modal, and explodes with celebratory canvas confetti!
-> 4. Record using [Peek](https://github.com/phw/peek), [vhs](https://github.com/charmbracelet/vhs), or [ScreenToGif](https://www.screentogif.com/).
+The tour auto-plays **once** on your first visit (2s after load). Replay it any time with <kbd>t</kbd> or the **15s Demo Tour** button.
+
+To record your own GIF: press <kbd>t</kbd>, then capture with [Peek](https://github.com/phw/peek), [vhs](https://github.com/charmbracelet/vhs), or [ScreenToGif](https://www.screentogif.com/).
 
 ---
 
-## 💡 Why Not `git-time-machine` TUI?
+## 💡 Why Not the Raw `git reflog`?
 
-Command-line TUIs are great until you accidentally press <kbd>Enter</kbd> on a dangerous command at 2:00 AM. Here is how **git-undo-gui** compares:
+Command-line output is great until you press <kbd>Enter</kbd> on a destructive command at 2 AM. Here's how **git-undo-gui** compares:
 
-| Feature | `git-undo-gui` 🚀 | Standard `git reflog` 📟 | `git-time-machine` TUI ⏳ |
+| Feature | `git-undo-gui` 🚀 | Raw `git reflog` 📟 | `git-time-machine` TUI ⏳ |
 | :--- | :---: | :---: | :---: |
-| **Word-Level Diff Highlighting** | ✅ Yes (Diffshot style) | ❌ Raw terminal patch | ⚠️ Line-level only |
-| **Accidental Enter Protection** | ✅ **"Type UNDO"** Modal | ❌ Instant destructive reset | ❌ None |
-| **Non-Destructive Rescue Branch** | ✅ One-click branch generator | ❌ Manual typing | ❌ Not available |
-| **Installation Overhead** | ✅ **0 MB** (Double click `index.html`) | ⚙️ Git CLI only | 📦 Node/Rust/Python toolchain |
-| **Visual Disaster Timeline** | ✅ Badged: `reset`, `push -f`, `deleted` | ❌ Monochromatic raw SHA wall | ⚠️ Basic log list |
-| **Import Terminal Reflog** | ✅ One-click regex parser | ❌ N/A | ❌ Direct repository only |
-| **Download `.patch` File** | ✅ Yes (Instant browser blob) | ❌ Requires piping git commands | ❌ No |
-| **Aesthetics** | 🌌 **Tokyo Night** GUI + Chimes + Confetti | ⬛ Terminal monochrome | 🔲 Curses terminal box |
+| **Word-Level Diff Highlighting** | ✅ Yes | ❌ Raw terminal lines | ⚠️ Line-level only |
+| **Accidental Enter Protection** | ✅ **"Type UNDO"** modal | ❌ Instant destructive reset | ❌ None |
+| **Non-Destructive Rescue Branch** | ✅ One-click command generator | ❌ Manual typing | ❌ Not available |
+| **Installation Overhead** | ✅ **0 MB** (open `index.html`) | ⚙️ Git CLI only | 📦 Node/Rust/Python toolchain |
+| **Visual Disaster Timeline** | ✅ Badged: `reset`, `force push`, `branch` | ❌ Monochromatic SHA wall | ⚠️ Basic log list |
+| **Import Terminal Reflog** | ✅ Robust regex parser | ❌ N/A | ❌ Direct repository only |
+| **Download `.patch` File** | ✅ Yes (all files in the entry) | ❌ Requires piping git commands | ❌ No |
+| **Aesthetics** | 🌌 **Tokyo Night**, chimes, confetti | ⬛ Terminal monochrome | 🔲 Curses terminal box |
 
 ---
 
-## ✨ Features (MVP)
+## ✨ Features
 
 ### 1. 🕒 Reflog Timeline Inspector
-- Real-time filtered view of `git reflog` events (`HEAD@{0}`, `HEAD@{1}`, etc.).
-- Pre-categorized emergency tags:
-  - 🔴 **`reset --hard`** (Accidental loss of commits or working tree)
-  - 🟠 **`force push`** (Overwritten upstream commits)
-  - 🟣 **`deleted branch`** (Dropped feature branches before PR merge)
-  - 🟢 **`amend` / `merge` / `cherry-pick`**
-- Instant search filter by commit hash, branch name, or message (press `/` to search).
+- Filtered view of `git reflog` events (`HEAD@{0}`, `HEAD@{1}`, …) with decorative ref info preserved exactly as git printed it.
+- Pre-categorized badges: `reset`, `force push`, `rebase`, `branch`, `checkout`, `stash`, `amend`, `merge`, `cherry-pick`.
+- Instant search by hash, action, or message (press <kbd>/</kbd>).
+- Empty state hero on first load: **Explore Demo Disaster** or **Import Reflog**.
 
-### 2. 🔍 Word-Level Diff Preview (Diffshot style)
-- Precise word-level and token-level diff highlighting.
-- Syntax styling matching Tokyo Night palette:
-  - Ruby red background with bright highlights for deletions.
-  - Neon emerald green background with crisp highlights for additions.
-- Side-by-side (Split) or Unified diff toggle.
-- File tabs for multi-file commit changes.
+### 2. 🔍 Word-Level Diff Preview
+- Token-level highlighting in Tokyo Night colours (`--tn-*` variables).
+- **Unified** and **Split** (side-by-side) modes — both render real content.
+- File tabs per commit; imported entries expose their raw reflog line as the diff body.
 
-### 3. 🛡️ SAFE Undo Engine & Safety Guard
-- Never runs destructive git commands silently.
-- Preview exact generated commands with one-click copy:
-  - **Soft Revert**: `git reset --soft <hash>` (keeps all files safely staged)
-  - **Rescue Branch**: `git branch rescue-<hash> <hash>` (zero risk)
-  - **Hard Reset**: `git reset --hard <hash>` (full restoration)
-- **Safety Interlock**: Requires typing **`UNDO`** to confirm any rollback.
-- Confetti explosion & Web Audio synthesized chime when a disaster is averted!
+### 3. 🛡️ Safe Undo Engine
+- Generates, never executes:
+  - **Soft Undo** — `git reset --soft <hash>` (keeps files staged)
+  - **Rescue Branch** — `git branch rescue-<hash> <hash>` (zero risk)
+  - **Hard Reset** — `git reset --hard <hash>` (full restoration)
+- **Safety interlock**: you must type `UNDO` before the confirm button unlocks.
+- Web Audio chime + canvas confetti when you complete the flow.
 
-### 4. 📋 Import Real Terminal Reflog
-- Run `git reflog` in your local terminal.
-- Click **"Import Reflog"** in the top bar and paste your output.
-- Robust regex parser (`hash HEAD@{n}: message`) instantly parses your actual git history and generates interactive diff previews.
+### 4. 📋 Import Your Real Reflog
+- Run `git reflog` (optionally `--date=iso`), paste it, hit parse.
+- Your lines are preserved verbatim: each entry's diff shows `Original reflog line: …`, never invented content.
+- The import is remembered in `localStorage`, so a reload restores *your* history instead of the demo.
+- Bad input shows an **inline error** with the line numbers it couldn't read — no `alert()` popups anywhere.
 
-### 5. 💾 Bonus Dev Utilities
-- **Download `.patch` file**: Export an RFC-compliant `.patch` file with one click to apply via `git apply`.
-- **Terminal Dry-Run Steps**: Step-by-step terminal checklist to verify your repository state safely.
+### 5. 💾 Bonus Utilities
+- **Download `.patch`**: every file in the selected entry, with a proper `diff --git` header per file, ready for `git apply --check`.
+- **Terminal Steps**: a safe, copyable workflow (`git branch rescue-backup…` → reset → `git status`).
 
 ---
 
-## 🚀 Installation & Quickstart
+## 🚀 Quickstart
 
-### Option A: Zero Install (Recommended)
-No `node_modules`, no Docker, no build step.
+### Option A — Zero install (recommended)
 
 ```bash
-# Clone and open directly
-git clone https://github.com/your-username/git-undo-gui.git
+git clone https://github.com/admos98/git-undo-gui.git
 cd git-undo-gui
-open index.html # On macOS, or xdg-open index.html on Linux / start index.html on Windows
+open index.html          # macOS
+# xdg-open index.html    # Linux
+# start index.html       # Windows
 ```
 
-Or just download [`index.html`](index.html) (<50KB) and double-click it in any web browser!
+Double-click works: there is no build step required to *use* the shipped file.
 
----
-
-### Option B: Tauri Desktop App (Native macOS, Linux, Windows)
-
-Run as an ultra-lightweight, native desktop menu bar app with Tauri:
+### Option B — Local dev server
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Run Tauri in development mode
-npm run tauri dev
-
-# 3. Build optimized native desktop binary (<5MB)
-npm run tauri build
+npm run dev        # recompiles Tailwind, serves on http://localhost:3000
+npm run build      # static build into dist/
 ```
+
+| Script | What it does |
+| :--- | :--- |
+| `npm run css:build` | Compiles `src/tailwind.css` and inlines the result into `index.html` |
+| `npm run dev` | `css:build` + Vite dev server on `0.0.0.0:3000` |
+| `npm run build` | `css:build` + static build to `dist/` |
+| `npm run tauri` | Placeholder for a future Tauri shell (not wired up yet) |
+
+> Run `npm run css:build` after editing markup or class names — the CSS is **inlined**, not loaded at runtime.
 
 ---
 
@@ -132,33 +131,42 @@ npm run tauri build
 
 | Shortcut | Action |
 | :--- | :--- |
-| <kbd>j</kbd> or <kbd>↓</kbd> | Move to next reflog entry |
-| <kbd>k</kbd> or <kbd>↑</kbd> | Move to previous reflog entry |
-| <kbd>u</kbd> or <kbd>⌘</kbd>+<kbd>Z</kbd> | Open Safe Undo confirmation dialog |
-| <kbd>c</kbd> | Copy generated git undo command |
-| <kbd>d</kbd> | Download `.patch` file for current snapshot |
-| <kbd>t</kbd> | Start automated 15-second demo tour (GIF ready) |
-| <kbd>/</kbd> | Focus reflog search bar |
-| <kbd>?</kbd> | Toggle keyboard shortcuts modal |
-| <kbd>Esc</kbd> | Close any open modal dialog |
+| <kbd>j</kbd> / <kbd>↓</kbd> | Move to next reflog entry |
+| <kbd>k</kbd> / <kbd>↑</kbd> | Move to previous reflog entry |
+| <kbd>u</kbd> / <kbd>⌘</kbd>+<kbd>Z</kbd> | Open the safe undo confirmation dialog |
+| <kbd>c</kbd> | Copy the generated git command |
+| <kbd>d</kbd> | Download `.patch` for the current snapshot |
+| <kbd>t</kbd> | Replay the 15-second demo tour |
+| <kbd>/</kbd> | Focus the reflog search box |
+| <kbd>?</kbd> | Toggle keyboard shortcuts |
+| <kbd>Tab</kbd> | Cycles **inside** an open dialog (focus trap) |
+| <kbd>Esc</kbd> | Close any open dialog |
+
+The three titlebar dots are real browser controls, not decoration: **red** attempts to close the tab (browsers only allow this for script-opened tabs and will tell you so), **amber** toggles zen mode (hide side panels), **green** toggles the Fullscreen API.
 
 ---
 
 ## 🎯 Technical Specifications
 
-- **File Size**: < 50KB total (single-file architecture).
-- **Network**: 100% offline capable (uses embedded canvas confetti and Web Audio API).
-- **Theme**: Tokyo Night (`#1a1b26`, `#16161e`, `#7dcfff`, `#bb9af7`, `#9ece6a`, `#f7768e`).
-- **Git Safety**: Read-only visualization and command generator. Does not invoke native subprocesses without user authorization.
+- **Architecture**: one `index.html` with inlined CSS + vanilla JS. No framework, no bundler at runtime.
+- **Size**: ≈133 KB total — ≈28 KB of that is Tailwind CSS compiled ahead of time and inlined.
+- **Network**: **none**. No `<script src>`, no `@import`, no fonts, no analytics. Works fully offline from `file://`.
+- **Runtime dependencies**: zero.
+- **Theme**: Tokyo Night (`#1a1b26`, `#16161e`, `#7dcfff`, `#bb9af7`, `#9ece6a`, `#f7768e`) via `--tn-*` variables.
+- **Storage**: `localStorage` keys `git-undo-seen`, `git-undo-tour-seen`, `git-undo-imported-reflog` (your pasted reflog, capped at 200k chars, clearable with the reset button).
+- **Accessibility**: text selectable by default (only app chrome opts out), `role="dialog"` + `aria-modal` + focus trap + `aria-live` toasts, `aria-label` on every icon-only button, visible focus rings.
+- **Git safety**: read-only visualisation and command generation. It never invokes a subprocess.
 
 ---
 
-## 🔍 SEO & Keywords
+## 🗺️ Roadmap (honest)
 
-`git undo`, `reflog visual`, `git time machine gui`, `visual git undo button`, `restore lost commits`, `git recovery tool`, `undo git push`, `git reflog viewer`, `tauri git gui`, `tokyo night git diff`.
+- [ ] Real Tauri desktop shell (currently only a `tauri` script placeholder).
+- [ ] Read `.git/logs/HEAD` via a local helper instead of copy/paste.
+- [ ] True `git show` diff import (needs a git-invoking backend, out of scope for a static file).
 
 ---
 
 ## 📄 License
 
-MIT © 2026 git-undo-gui contributors. Free for personal and commercial developer use.
+MIT © 2026 git-undo-gui contributors — see [LICENSE](LICENSE).

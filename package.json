@@ -1,36 +1,38 @@
 {
-  "name": "react-example",
+  "name": "git-undo-gui",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.0.0",
+  "description": "Visual git undo button: reads `git reflog`, previews word-level diffs, and generates safe undo commands. Single-file, offline-first.",
   "type": "module",
-  "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+  "license": "MIT",
+  "homepage": "https://github.com/admos98/git-undo-gui",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/admos98/git-undo-gui.git"
   },
-  "dependencies": {
-    "@google/genai": "^2.4.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "@vitejs/plugin-react": "^6.1.1",
-    "lucide-react": "^0.546.0",
-    "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "vite": "^8.3.0",
-    "express": "^4.21.2",
-    "dotenv": "^17.2.3",
-    "motion": "^12.23.24"
+  "keywords": [
+    "git",
+    "reflog",
+    "undo",
+    "time-machine",
+    "diff",
+    "tui-alternative"
+  ],
+  "files": [
+    "index.html",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "css:build": "node src/build-css.mjs",
+    "dev": "npm run css:build && vite --port=3000 --host=0.0.0.0",
+    "build": "npm run css:build && vite build",
+    "preview": "vite preview --port=4173 --host=0.0.0.0",
+    "tauri": "tauri"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
-    "tailwindcss": "^4.3.3",
-    "tsx": "^4.21.0",
-    "typescript": "^7.0.2",
-    "@types/express": "^4.17.21"
+    "@tailwindcss/cli": "^4.1.14",
+    "tailwindcss": "^4.1.14",
+    "vite": "^7.1.7"
   }
 }
