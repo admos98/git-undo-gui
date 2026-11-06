@@ -58,7 +58,12 @@ mod tests {
         // a script tag, which makes the naive search tautological.
         let app = page.find("function isDesktop").expect("app code present");
         assert!(bridge < app, "bridge must be defined before the app runs");
-        assert_eq!(page.matches("__TAURI_INTERNALS__").count(), 1, "injected once");
+        // Count the injected block itself; the token appears twice inside it.
+        assert_eq!(
+            page.matches("Object.defineProperty(window, '__TAURI__'").count(),
+            1,
+            "the bridge must be injected exactly once"
+        );
     }
 
     #[test]
