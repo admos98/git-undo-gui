@@ -28,11 +28,17 @@
     "dev": "npm run css:build && vite --port=3000 --host=0.0.0.0",
     "build": "npm run css:build && vite build",
     "preview": "vite preview --port=4173 --host=0.0.0.0",
-    "tauri": "tauri"
+    "test": "node tests/run.mjs",
+    "test:ci": "npm run css:build && node tests/run.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "npm run build && tauri dev",
+    "tauri:build": "npm run build && tauri build"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.14",
+    "jsdom": "^25.0.1",
     "tailwindcss": "^4.1.14",
-    "vite": "^7.1.7"
+    "vite": "^7.1.7",
+    "@tauri-apps/cli": "^2.0.0"
   }
 }

@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
-[![Bundle size](https://img.shields.io/badge/index.html-142%20KB%20(29%20KB%20CSS%20inlined)-7dcfff)](index.html)
+[![Bundle size](https://img.shields.io/badge/index.html-157%20KB%20(29%20KB%20CSS%20inlined)-7dcfff)](index.html)
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
@@ -11,10 +11,10 @@
 
 ### 📌 Demo Status — please read
 
-**This is a visual demo and a safe command generator.** It does **not** run git, does not open a repository, and does not shell out to anything. It parses reflog text that *you* paste in, shows you what each entry means, and writes the exact command you'd need. You stay in control of your terminal.
+**This is a viewer and a safe command generator.** It does **not** run git, does not open a repository, and does not shell out to anything. It parses the reflog / `git log -p` / `git show` text that *you* paste in, shows you what each entry means with real per-file diffs, and writes the exact command you'd need. You stay in control of your terminal.
 
 - Sample data is 6 hand-written entries, clearly labelled **DEMO MODE** in the titlebar.
-- Data you import is labelled **IMPORTED** and stays in your browser's `localStorage` only.
+- Data you import is labelled **REFLOG** or **GIT LOG** and stays in your browser's `localStorage` only.
 - The safe undo flow is labelled **Demo Undo (simulated)** — it copies a command, nothing more.
 
 ---
@@ -87,9 +87,15 @@ Command-line output is great until you press <kbd>Enter</kbd> on a destructive c
 - **Copy diff**: copies **every file** in the entry (Shift+click copies only the active tab).
 - **Download `.patch`**: all files, per-file `diff --git` headers, `git apply --check` friendly.
 
-### 4. 📋 Import Your Real Reflog
-- Run `git reflog` (optionally `--date=iso`), paste it, hit parse.
-- Your lines are preserved verbatim: each entry's diff shows `Original reflog line: …`, never invented content.
+### 4. 📋 Import — reflog **or** real patches
+- `git reflog` (optionally `--date=iso`) → a timeline; every entry's diff body is the
+  raw line you pasted (`Original reflog line: …`). Nothing is invented.
+- `git log -p`, `git show <hash>`, `git format-patch`, or `git log --oneline` → parsed
+  into commits with **real per-file diffs**: file tabs, hunks, +/- counts, word-level
+  highlighting, split view. This is how the app shows real patches without ever
+  executing git — you run the command, it reads the output.
+- Three one-click samples in the import dialog (reflog / log -p / show) so you can see
+  the difference before pasting your own.
 - The import is remembered in `localStorage`, so a reload restores *your* history instead of the demo.
 - Bad input shows an **inline error** with the line numbers it couldn't read — no `alert()` popups anywhere.
 
@@ -102,6 +108,61 @@ Command-line output is great until you press <kbd>Enter</kbd> on a destructive c
 
 ### 5. 💾 Bonus Utilities
 - **Terminal Steps**: a safe, copyable workflow (`git branch rescue-backup…` → reset → `git status`).
+
+---
+
+## ✅ Tests
+
+The suite loads the shipped `index.html` into jsdom — it tests the artifact, not a build.
+
+```bash
+npm install
+npm test              # 61 checks, ~12s
+npm test -- parsers   # filter by suite file
+```
+
+| Suite | Covers |
+| :--- | :--- |
+| `tests/parsers.test.mjs` | reflog (plain, decorated, `--date=iso`, branch reflog, short hashes), `git show`, `git log -p`, `--oneline`, CRLF, unparseable input, count integrity |
+| `tests/state.test.mjs` | first-run hero + auto tour, returning visit, import persistence across reload, demo/import switching, banner honesty, demo stats |
+| `tests/ui.test.mjs` | j/k/arrows, `u`, `?`, `/`, layered Esc, `Type UNDO`, confetti+chime, clipboard fallbacks, copy/patch exports, row semantics, focus trap, tour cancel/replay |
+| `tests/integrity.test.mjs` | no CDN/network/`alert`, inlined CSS freshness, CSP present, package.json hygiene, XSS regression, size budget |
+
+CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
+`src/tailwind.css` (`.github/workflows/ci.yml`).
+
+---
+
+## 🔒 Security model
+
+- **No network surface**: CSP `default-src 'none'` with `connect-src 'none'`, no remote
+  script/style/img/font, and no `fetch`/XHR in the code. Your pasted reflog never leaves
+  the tab.
+- **No shell**: the app cannot read a repository or run git. It parses text and emits a
+  command for *you* to review.
+- **No injection**: every user-derived string is escaped before it reaches `innerHTML`;
+  a regression test pastes `<img onerror>` / `<script>` payloads and asserts nothing executes.
+- **Persisted locally**: `localStorage` only, capped at 200k chars, and the app tells you
+  when the browser blocks it (common on `file://`).
+
+---
+
+## 🖥️ Desktop (Tauri v2, optional)
+
+`src-tauri/` contains a thin native shell that hosts the same built `dist/index.html`.
+It exposes **no IPC commands** — the desktop build has the same read-only, no-git
+guarantees as the web build.
+
+```bash
+npm install
+npm run build
+npx @tauri-apps/cli@^2 dev     # needs Rust + platform toolchain
+npm run tauri:build            # bundles via src-tauri/tauri.conf.json
+```
+
+The shell is scaffolded and configured but **not part of CI by default** (release
+workflow gates it behind `vars.TAURI_ENABLED`). Icons are generated with
+`npx @tauri-apps/cli@^2 icon <png>`; see `src-tauri/README.md`.
 
 ---
 
@@ -132,7 +193,8 @@ npm run build      # static build into dist/
 | `npm run css:build` | Compiles `src/tailwind.css` and inlines the result into `index.html` |
 | `npm run dev` | `css:build` + Vite dev server on `0.0.0.0:3000` |
 | `npm run build` | `css:build` + static build to `dist/` |
-| `npm run tauri` | Placeholder for a future Tauri shell (not wired up yet) |
+| `npm test` | Run the jsdom suite against the shipped `index.html` |
+| `npm run tauri:build` | Build the native shell from `src-tauri/` |
 
 > Run `npm run css:build` after editing markup or class names — the CSS is **inlined**, not loaded at runtime.
 
@@ -161,11 +223,11 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 ## 🎯 Technical Specifications
 
 - **Architecture**: one `index.html` with inlined CSS + vanilla JS. No framework, no bundler at runtime.
-- **Size**: ≈142 KB total — ≈29 KB of that is Tailwind CSS compiled ahead of time and inlined.
+- **Size**: ≈157 KB total — ≈29 KB of that is Tailwind CSS compiled ahead of time and inlined.
 - **Network**: **none**. No `<script src>`, no `@import`, no fonts, no analytics. Works fully offline from `file://`.
 - **Runtime dependencies**: zero.
 - **Theme**: Tokyo Night (`#1a1b26`, `#16161e`, `#7dcfff`, `#bb9af7`, `#9ece6a`, `#f7768e`) via `--tn-*` variables.
-- **Storage**: `localStorage` keys `git-undo-seen`, `git-undo-tour-seen`, `git-undo-imported-reflog` (your pasted reflog, capped at 200k chars, clearable with the reset button).
+- **Storage**: `localStorage` keys `git-undo-seen`, `git-undo-tour-seen`, `git-undo-imported-reflog`, `git-undo-import-mode` (capped at 200k chars, clearable with the reset button).
 - **Accessibility**: text selectable by default (only app chrome opts out), one `h1`, `role="listbox"/"option"` timeline that is keyboard reachable (Tab + Enter), `role="dialog"` + `aria-modal` + `aria-describedby` + focus trap, `aria-live` toasts and counts, `aria-label` on every icon-only button, visible focus rings, `prefers-reduced-motion` respected.
 - **Git safety**: read-only visualisation and command generation. It never invokes a subprocess.
 
@@ -176,7 +238,7 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 | Project | Shape | Overlap with this repo | Where this repo differs |
 | :--- | :--- | :--- | :--- |
 | [lazygit](https://github.com/jesseduffield/lazygit) (~84k★) | Go TUI | `z` undo uses the reflog | Terminal-only; this is a zero-install browser view with word-level diff + a "type UNDO" interlock |
-| [git-time-machine](https://github.com/dinakars777/git-time-machine) | Rust TUI | reflog timeline, j/k, one-key restore | **Actually executes** `reset --hard`; this one never runs git and never claims to |
+| [git-time-machine](https://github.com/dinakars777/git-time-machine) | Rust TUI | reflog timeline, j/k, one-key restore | **Actually executes** `reset --hard`; this one never runs git and now parses real patches instead |
 | [pronzzz/time-machine](https://github.com/pronzzz/time-machine) | Rust TUI | reflog + live diff previews + safe revert | Same idea in the terminal; this needs no toolchain at all |
 | [gitkeen](https://github.com/tgomilar/gitkeen) | Tauri desktop client | full git client with undo | Far broader scope (a real client); this is a single-purpose, read-only triage tool |
 | GitButler / GitKraken / Sourcetree | Desktop GUI | undo & reflog views | Require install + repo access; this works on a pasted reflog from a machine you can't install on |
@@ -188,9 +250,13 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 
 ## 🗺️ Roadmap (honest)
 
-- [ ] Real Tauri desktop shell (currently only a `tauri` script placeholder).
-- [ ] Read `.git/logs/HEAD` via a local helper instead of copy/paste.
-- [ ] True `git show` diff import (needs a git-invoking backend, out of scope for a static file).
+- [x] Real diffs from `git show` / `git log -p` paste (no backend needed).
+- [x] Test suite + CI.
+- [x] Tauri v2 shell scaffolded (shell only, no IPC).
+- [ ] Read `.git/logs/HEAD` directly — needs a local helper or file picker API, and a
+      security review, because it turns "text in" into "filesystem access".
+- [ ] Multi-entry selection ("undo everything since HEAD@{4}").
+- [ ] Copy-as-markdown incident report for PRs / team standups.
 
 ---
 

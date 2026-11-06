@@ -9,10 +9,8 @@ dist-ssr/
 build/
 *.local
 
-# Tauri (when wired up)
+# Tauri
 .tauri/
-src-tauri/target/
-src-tauri/gen/
 
 # Logs
 *.log
@@ -45,3 +43,7 @@ coverage/
 *.webm
 *.mp4
 tour-*.png
+
+# Rust / Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/

@@ -1,0 +1,64 @@
+name: Release
+
+# Builds the three artifacts people actually want: index.html, a tarball, and
+# (optionally) native desktop bundles. Tauri jobs are opt-in because they need
+# platform runners and signed binaries.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  static:
+    name: Static artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Package
+        run: |
+          tar -czf git-undo-gui-${{ github.ref_name }}.tar.gz index.html LICENSE README.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/index.html
+            git-undo-gui-${{ github.ref_name }}.tar.gz
+          generate_release_notes: true
+
+  desktop:
+    name: Desktop (${{ matrix.platform }})
+    # Only runs when the repository has the Rust toolchain available.
+    if: vars.TAURI_ENABLED == 'true'
+    needs: static
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: npm ci
+      - run: npm run build
+      - run: npx tauri build
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/bundle/**/*
+          generate_release_notes: true
