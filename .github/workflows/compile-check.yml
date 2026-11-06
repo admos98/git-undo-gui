@@ -122,6 +122,8 @@ jobs:
         run: |
           set -o pipefail
           cargo test --bins -- --test-threads=1 2>&1 | tee -a /tmp/shell.log
+          PASSED=$(sed -n 's/^test result: ok\. \([0-9]\+\) passed.*/\1/p' /tmp/shell.log | paste -sd+ - | bc)
+          echo "::notice::end-to-end: ${PASSED:-0} tests passed against real repositories"
 
       - name: Build the binary and check its weight
         working-directory: src-tauri
@@ -131,6 +133,7 @@ jobs:
           ls -lh "$BIN"
           SIZE=$(stat -c%s "$BIN")
           echo "### Desktop binary: $((SIZE/1024/1024)) MiB" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::release binary is $((SIZE/1024/1024)) MiB (budget 20 MiB)"
           if [ "$SIZE" -gt 20971520 ]; then
             echo "::error::binary exceeds the 20 MiB budget promised in the README"
             exit 1
