@@ -117,13 +117,21 @@ jobs:
       # Real repositories, real git. This is the closest CI can get to clicking
       # the app: refusals must leave the repo untouched, and the backup branch
       # must exist before the reset it protects.
+      #
+      # --lib matters: the tests live in the library target, so --bins would run
+      # nothing and pass. A green step that executes zero tests is worse than a
+      # red one, hence the explicit count.
       - name: End-to-end against throwaway repositories
         working-directory: src-tauri
         run: |
           set -o pipefail
-          cargo test --bins -- --test-threads=1 2>&1 | tee -a /tmp/shell.log
-          PASSED=$(sed -n 's/^test result: ok\. \([0-9]\+\) passed.*/\1/p' /tmp/shell.log | paste -sd+ - | bc)
-          echo "::notice::end-to-end: ${PASSED:-0} tests passed against real repositories"
+          cargo test --lib -- --test-threads=1 2>&1 | tee -a /tmp/shell.log
+          RAN=$(awk '/^test result: ok\./ {s += $4} END {print s+0}' /tmp/shell.log)
+          echo "::notice::library tests executed: $RAN"
+          if [ "$RAN" -lt 10 ]; then
+            echo "::error::expected at least 10 library tests (guard wiring + e2e), ran $RAN"
+            exit 1
+          fi
 
       - name: Build the binary and check its weight
         working-directory: src-tauri
