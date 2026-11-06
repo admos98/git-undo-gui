@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
-[![Bundle size](https://img.shields.io/badge/index.html-157%20KB%20(29%20KB%20CSS%20inlined)-7dcfff)](index.html)
+[![Bundle size](https://img.shields.io/badge/index.html-180%20KB%20(30%20KB%20CSS%20inlined)-7dcfff)](index.html)
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
@@ -75,12 +75,27 @@ Command-line output is great until you press <kbd>Enter</kbd> on a destructive c
 - File tabs per commit; imported entries expose their raw reflog line as the diff body.
 
 ### 3. 🛡️ Safe Undo Engine
-- Generates, never executes:
-  - **Soft Undo** — `git reset --soft <hash>` (keeps files staged)
-  - **Rescue Branch** — `git branch rescue-<hash> <hash>` (zero risk)
-  - **Hard Reset** — `git reset --hard <hash>` (full restoration)
+- Generates, never executes. Four strategies (`1`–`4`), defaulting to the one that cannot lose work:
+  - **Soft Undo** (`1`) — `git reset --soft <hash>` (keeps files staged)
+  - **Rescue Branch** (`2`, default) — `git branch rescue-<hash> <hash>` (zero risk)
+  - **Restore Files** (`3`) — `git restore --source=<hash> -- .` (no HEAD move)
+  - **Hard Reset** (`4`) — `git reset --hard <hash>` (full restoration)
+- **Action-aware commands**: a `stash:` entry becomes `git stash apply`, a `checkout:` entry becomes
+  `git switch --detach`, a `branch:` entry becomes `git switch -c recovered-…`. A blind
+  `reset --hard` on every row would be wrong for most of them.
 - **Safety interlock**: you must type `UNDO` before the confirm button unlocks.
 - Web Audio chime + canvas confetti when you complete the flow.
+
+### 3a. 🧰 Multi-entry recovery, undo-push, and reports
+- **Recovery range** — Shift-click an entry (or <kbd>Shift</kbd>+<kbd>J</kbd>) to select "everything from here down".
+  Indexes run newest→oldest, so undoing N selected actions targets the entry **after** the range — the last state
+  before the actions you're undoing. If the range reaches the oldest entry in your paste, the UI says so instead of
+  silently pointing at a state you're already in.
+- **Undo last push** — when the reflog contains a push (especially a forced update), a dedicated panel hands you
+  a reviewed 4-step sequence: inspect the reflog, create `backup-before-recovery`, reset the branch, and only then
+  `git push --force-with-lease` — never a bare `--force`.
+- **Incident report** (`r`) — copies a Markdown brief (entry, hash, selected strategy, command, change surface,
+  safety checklist) ready to paste into a PR comment or team chat.
 
 ### 3b. 📋 Copy & export that actually works offline
 - **Clipboard**: `navigator.clipboard` doesn't exist on `file://` or in some webviews — so a `textarea` + `execCommand` fallback runs first, and if the browser blocks both, the command is *selected on screen* and the toast says "press ⌘C/Ctrl+C".
@@ -117,7 +132,7 @@ The suite loads the shipped `index.html` into jsdom — it tests the artifact, n
 
 ```bash
 npm install
-npm test              # 61 checks, ~12s
+npm test              # 77 checks, ~14s
 npm test -- parsers   # filter by suite file
 ```
 
@@ -126,6 +141,7 @@ npm test -- parsers   # filter by suite file
 | `tests/parsers.test.mjs` | reflog (plain, decorated, `--date=iso`, branch reflog, short hashes), `git show`, `git log -p`, `--oneline`, CRLF, unparseable input, count integrity |
 | `tests/state.test.mjs` | first-run hero + auto tour, returning visit, import persistence across reload, demo/import switching, banner honesty, demo stats |
 | `tests/ui.test.mjs` | j/k/arrows, `u`, `?`, `/`, layered Esc, `Type UNDO`, confetti+chime, clipboard fallbacks, copy/patch exports, row semantics, focus trap, tour cancel/replay |
+| `tests/features.test.mjs` | action-aware commands, strategy cards + keys, recovery range, undo-push sequence, incident report, oversized paste, empty-state coherence |
 | `tests/integrity.test.mjs` | no CDN/network/`alert`, inlined CSS freshness, CSP present, package.json hygiene, XSS regression, size budget |
 
 CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
@@ -209,6 +225,9 @@ npm run build      # static build into dist/
 | <kbd>u</kbd> / <kbd>⌘</kbd>+<kbd>Z</kbd> | Open the safe undo confirmation dialog |
 | <kbd>c</kbd> | Copy the generated git command |
 | <kbd>d</kbd> | Download `.patch` for the current snapshot |
+| <kbd>Shift</kbd>+<kbd>j</kbd>/<kbd>k</kbd> | Extend the recovery range |
+| <kbd>1</kbd>–<kbd>4</kbd> | Pick undo strategy (soft / branch / restore / hard) |
+| <kbd>r</kbd> | Copy the Markdown incident report |
 | <kbd>t</kbd> | Replay the 15-second demo tour |
 | <kbd>/</kbd> | Focus the reflog search box |
 | <kbd>?</kbd> | Toggle keyboard shortcuts |
@@ -223,10 +242,12 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 ## 🎯 Technical Specifications
 
 - **Architecture**: one `index.html` with inlined CSS + vanilla JS. No framework, no bundler at runtime.
-- **Size**: ≈157 KB total — ≈29 KB of that is Tailwind CSS compiled ahead of time and inlined.
+- **Size**: ≈180 KB total — ≈30 KB of that is Tailwind CSS compiled ahead of time and inlined.
 - **Network**: **none**. No `<script src>`, no `@import`, no fonts, no analytics. Works fully offline from `file://`.
 - **Runtime dependencies**: zero.
 - **Theme**: Tokyo Night (`#1a1b26`, `#16161e`, `#7dcfff`, `#bb9af7`, `#9ece6a`, `#f7768e`) via `--tn-*` variables.
+- **Import limits**: up to ~2 MB of pasted text is parsed in-tab (larger pastes are refused with an explanation);
+  only the first 200 KB is persisted for reloads.
 - **Storage**: `localStorage` keys `git-undo-seen`, `git-undo-tour-seen`, `git-undo-imported-reflog`, `git-undo-import-mode` (capped at 200k chars, clearable with the reset button).
 - **Accessibility**: text selectable by default (only app chrome opts out), one `h1`, `role="listbox"/"option"` timeline that is keyboard reachable (Tab + Enter), `role="dialog"` + `aria-modal` + `aria-describedby` + focus trap, `aria-live` toasts and counts, `aria-label` on every icon-only button, visible focus rings, `prefers-reduced-motion` respected.
 - **Git safety**: read-only visualisation and command generation. It never invokes a subprocess.
@@ -255,8 +276,10 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 - [x] Tauri v2 shell scaffolded (shell only, no IPC).
 - [ ] Read `.git/logs/HEAD` directly — needs a local helper or file picker API, and a
       security review, because it turns "text in" into "filesystem access".
-- [ ] Multi-entry selection ("undo everything since HEAD@{4}").
-- [ ] Copy-as-markdown incident report for PRs / team standups.
+- [x] Multi-entry selection ("undo everything since HEAD@{4}").
+- [x] Copy-as-markdown incident report for PRs / team standups.
+- [x] Action-aware command generation (stash / checkout / branch entries).
+- [x] Undo-push sequence with `--force-with-lease`.
 
 ---
 

@@ -106,8 +106,10 @@ suite.test("clipboard failure selects the command on screen and says so", async 
   app("window.__toast = null; showToast = (t, m) => { window.__toast = t + ' | ' + m; };");
   await app("copyCommand()");
   const toast = app("window.__toast") || "";
-  const selected = (String(app("window.getSelection().toString()")) || "").includes("git reset");
-  return toast.includes("manually") && selected || `toast=${toast} selected=${selected}`;
+  const command = d.getElementById("generated-command").textContent.trim();
+  const selection = String(app("window.getSelection().toString()") || "");
+  const selected = selection.includes(command);
+  return toast.includes("manually") && selected || `toast=${toast} selected="${selection}" command="${command}"`;
 });
 
 suite.test("copy diff includes every file; Shift+click copies the active one", async () => {
