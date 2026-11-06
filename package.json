@@ -31,8 +31,9 @@
     "test": "node tests/run.mjs",
     "test:ci": "npm run css:build && node tests/run.mjs",
     "tauri": "tauri",
-    "tauri:dev": "npm run build && tauri dev",
-    "tauri:build": "npm run build && tauri build"
+    "tauri:dev": "npm run build && npm run embed:web && tauri dev",
+    "tauri:build": "npm run build && npm run embed:web && tauri build",
+    "embed:web": "node scripts/embed-web.mjs"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.14",

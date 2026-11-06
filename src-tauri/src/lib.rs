@@ -9,6 +9,7 @@
 //! If `git` is missing, commands fail with `git_unavailable` and the UI falls back
 //! to the copy-a-command experience.
 
+mod embed;
 mod git;
 mod service;
 
@@ -66,16 +67,36 @@ fn git_reset(
     service::reset(&PathBuf::from(path), &target, &strategy, confirm.as_deref())
 }
 
+/// Serve the embedded page. `app.localhost` is what Tauri registers as the
+/// window's custom protocol, and on all three platforms it resolves to a URL the
+/// webview accepts — no listening socket is opened.
+fn serve_page(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder.register_uri_scheme_protocol("app", |_ctx, _request| {
+        tauri::http::Response::builder()
+            .header("Content-Type", "text/html; charset=utf-8")
+            .header("Content-Security-Policy", CSP)
+            .body(embed::page().into_bytes())
+            .unwrap_or_else(|_| tauri::http::Response::new(Vec::new()))
+    })
+}
+
+/// Same policy as the web build, minus the rules a webview needs for its own
+/// IPC. Nothing is allowed to phone home.
+const CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
+                   img-src data:; font-src data:; connect-src 'none'";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             git_read_reflog,
             git_repo_state,
             git_create_backup,
             git_reset
-        ])
+        ]);
+
+    serve_page(builder)
         .run(tauri::generate_context!())
         .expect("error while running git-undo-gui");
 }

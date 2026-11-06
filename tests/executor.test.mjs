@@ -288,6 +288,33 @@ suite.test("a successful reset reports the way back", async () => {
   return reads >= 2 || `reflog read ${reads} time(s); expected a refresh after the reset`;
 });
 
+// ------------------------------------------------------- desktop packaging
+
+suite.test("the desktop build ships the same page as the web build", async () => {
+  // tauri embeds src-tauri/assets/index.html; if that drifts from dist the
+  // desktop app silently runs an older UI. Compare against the committed source.
+  const source = readFileSync(resolve(ROOT, "index.html"), "utf8");
+  const embedded = readFileSync(resolve(ROOT, "src-tauri", "assets", "index.html"), "utf8");
+  if (embedded !== source) {
+    return "src-tauri/assets/index.html is stale — run `npm run build && npm run embed:web`";
+  }
+  // And the frontend must not depend on a bundled JS package to find the bridge.
+  if (!/window\.__TAURI__/.test(source)) return "the UI no longer looks for the Tauri global";
+  return true;
+});
+
+suite.test("the shell serves the page itself and loads nothing remote", async () => {
+  const conf = JSON.parse(rust("tauri.conf.json"));
+  const url = conf.app.windows[0].url;
+  if (!url || /^https?:\/\/(?!app\.localhost)/.test(url)) return `window points somewhere remote: ${url}`;
+  const lib = rust("src/lib.rs");
+  if (!/register_uri_scheme_protocol\("app"/.test(lib)) return "no custom protocol registered";
+  if (/devUrl/.test(rust("tauri.conf.json"))) return "a devUrl is configured; the packaged app must not fetch a page";
+  // The bridge is injected by the shell, so the app needs no @tauri-apps/api.
+  if (!/__TAURI_INTERNALS__/.test(rust("src/embed.rs"))) return "the shell injects no IPC bridge";
+  return true;
+});
+
 // --------------------------------------------------------------- lightness
 
 suite.test("the executor adds no runtime dependency to the web build", async () => {

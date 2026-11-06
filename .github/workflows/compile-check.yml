@@ -120,6 +120,10 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+      - name: Sync the embedded page
+        run: node scripts/embed-web.mjs
+      - name: Embedded copy matches dist
+        run: node scripts/embed-web.mjs --check
 
       - name: Compile
         working-directory: src-tauri

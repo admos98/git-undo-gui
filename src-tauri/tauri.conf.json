@@ -3,9 +3,7 @@
   "productName": "git-undo-gui",
   "version": "1.0.0",
   "identifier": "dev.gitundo.gui",
-  "build": {
-    "frontendDist": "../dist"
-  },
+  "build": {},
   "app": {
     "withGlobalTauri": true,
     "windows": [
@@ -19,7 +17,8 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
-        "theme": "Dark"
+        "theme": "Dark",
+        "url": "http://app.localhost/"
       }
     ],
     "security": {
@@ -29,7 +28,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"],
+    "icon": [
+      "icons/icon.png"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "Visual git undo from your reflog",
     "longDescription": "Reads your reflog, previews the undo, and generates the command. The optional desktop build can also run the reset itself, guarded and after taking a backup branch."
