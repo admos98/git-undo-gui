@@ -1,0 +1,1808 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>git-undo-gui — Visual Git Undo Button & Reflog Time Machine</title>
+  <meta name="description" content="Visual Git Undo Button — Turn git reflog into a safe, visual time machine with word-level diff preview and one-click undo." />
+  <meta property="og:title" content="git-undo-gui — Visual Git Undo Button" />
+  <meta property="og:description" content="Turn git reflog into a pretty Undo Last Push with word-level diff preview and safe confirmation." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="keywords" content="git undo, reflog visual, git time machine gui, visual git undo button, restore lost commits, git recovery" />
+
+  <!-- Tailwind CDN for standard utility classes -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    /* Tokyo Night Theme Custom Palette & Styling */
+    :root {
+      --tn-bg-darkest: #16161e;
+      --tn-bg-dark: #1a1b26;
+      --tn-bg-surface: #1f2335;
+      --tn-bg-card: #24283b;
+      --tn-bg-card-hover: #292e42;
+      --tn-border: #292e42;
+      --tn-border-light: #414868;
+      --tn-fg: #c0caf5;
+      --tn-fg-dark: #a9b1d6;
+      --tn-fg-gutter: #565f89;
+      --tn-cyan: #7dcfff;
+      --tn-blue: #7aa2f7;
+      --tn-purple: #bb9af7;
+      --tn-magenta: #ff007c;
+      --tn-red: #f7768e;
+      --tn-orange: #ff9e64;
+      --tn-yellow: #e0af68;
+      --tn-green: #9ece6a;
+      --tn-teal: #73daca;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    
+    code, pre, .font-mono, textarea, input.font-mono {
+      user-select: text;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    body {
+      background-color: var(--tn-bg-darkest);
+      color: var(--tn-fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--tn-bg-darkest);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--tn-border-light);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--tn-fg-gutter);
+    }
+
+    /* Diff styling with word-level highlight */
+    .diff-line {
+      display: flex;
+      line-height: 1.5rem;
+      font-size: 0.8125rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      padding: 0 0.5rem;
+    }
+    .diff-line.del {
+      background-color: rgba(247, 118, 142, 0.12);
+      color: #f7768e;
+    }
+    .diff-line.add {
+      background-color: rgba(158, 206, 106, 0.12);
+      color: #9ece6a;
+    }
+    .diff-line.hunk {
+      background-color: rgba(122, 162, 247, 0.1);
+      color: #7aa2f7;
+      font-weight: 600;
+    }
+    .diff-gutter {
+      width: 3.25rem;
+      flex-shrink: 0;
+      color: var(--tn-fg-gutter);
+      text-align: right;
+      padding-right: 0.75rem;
+      user-select: none;
+    }
+    .diff-symbol {
+      width: 1.25rem;
+      flex-shrink: 0;
+      text-align: center;
+      user-select: none;
+      font-weight: bold;
+    }
+    .diff-content {
+      flex: 1;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Word-level diff highlights */
+    .w-del {
+      background-color: rgba(247, 118, 142, 0.38);
+      color: #ffffff;
+      padding: 0.05rem 0.25rem;
+      border-radius: 2px;
+      font-weight: 600;
+    }
+    .w-add {
+      background-color: rgba(158, 206, 106, 0.38);
+      color: #ffffff;
+      padding: 0.05rem 0.25rem;
+      border-radius: 2px;
+      font-weight: 600;
+    }
+
+    /* Pulse animation for Safe Undo button */
+    @keyframes pulse-glow {
+      0%, 100% {
+        box-shadow: 0 0 15px rgba(187, 154, 247, 0.4), 0 0 30px rgba(125, 207, 255, 0.2);
+        transform: scale(1);
+      }
+      50% {
+        box-shadow: 0 0 25px rgba(187, 154, 247, 0.7), 0 0 45px rgba(125, 207, 255, 0.4);
+        transform: scale(1.02);
+      }
+    }
+    .pulse-undo {
+      animation: pulse-glow 2s infinite ease-in-out;
+    }
+
+    /* Demo pointer indicator */
+    #demo-pointer {
+      pointer-events: none;
+      position: fixed;
+      z-index: 9999;
+      width: 24px;
+      height: 24px;
+      background: radial-gradient(circle, #7dcfff 0%, rgba(125,207,255,0.4) 60%, transparent 100%);
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 12px #7dcfff;
+      transform: translate(-50%, -50%);
+      transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+      opacity: 0;
+    }
+
+    /* Canvas Confetti */
+    #confetti-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 10000;
+    }
+  </style>
+</head>
+<body class="bg-[#16161e] text-[#c0caf5] select-none">
+
+  <!-- Confetti Canvas -->
+  <canvas id="confetti-canvas"></canvas>
+
+  <!-- Demo Virtual Pointer for 15s Tour -->
+  <div id="demo-pointer"></div>
+
+  <!-- TAURI TITLEBAR (Native Desktop Aesthetic) -->
+  <header class="h-10 bg-[#16161e] border-b border-[#292e42] flex items-center justify-between px-3 select-none shrink-0 z-20">
+    <!-- Left: Mac Window Controls & App Title -->
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-1.5 mr-2">
+        <button onclick="closeAppModal()" class="w-3 h-3 rounded-full bg-[#f7768e] hover:opacity-80 transition cursor-pointer" title="Close"></button>
+        <button onclick="minimizeApp()" class="w-3 h-3 rounded-full bg-[#e0af68] hover:opacity-80 transition cursor-pointer" title="Minimize"></button>
+        <button onclick="toggleMaximize()" class="w-3 h-3 rounded-full bg-[#9ece6a] hover:opacity-80 transition cursor-pointer" title="Maximize"></button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <svg class="w-4 h-4 text-[#7dcfff]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M12 7v5l4 2" />
+        </svg>
+        <span class="font-bold text-xs tracking-wide text-white">git-undo-gui</span>
+        <span class="text-[10px] bg-[#1f2335] text-[#7aa2f7] px-1.5 py-0.5 rounded border border-[#292e42] font-mono">Tauri v1.0</span>
+      </div>
+
+      <div class="hidden md:flex items-center text-xs text-[#565f89] gap-1 font-mono">
+        <span>~/workspace/billing-api</span>
+        <span class="text-[#414868]">·</span>
+        <span class="text-[#7aa2f7]">branch:main</span>
+      </div>
+    </div>
+
+    <!-- Right: Header Actions -->
+    <div class="flex items-center gap-2">
+      <!-- 15-second Demo Tour Button -->
+      <button id="btn-tour" onclick="start15SecDemoTour()" class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold bg-[#24283b] hover:bg-[#292e42] text-[#bb9af7] border border-[#bb9af7]/40 rounded-md transition shadow-sm cursor-pointer">
+        <span class="w-2 h-2 rounded-full bg-[#bb9af7] animate-pulse"></span>
+        <span>15s Demo Tour</span>
+      </button>
+
+      <!-- Paste Reflog Upload Modal -->
+      <button onclick="openImportModal()" class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-[#1f2335] hover:bg-[#24283b] text-[#7dcfff] border border-[#292e42] rounded-md transition cursor-pointer" title="Paste real git reflog output">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+        <span>Import Reflog</span>
+      </button>
+
+      <!-- Reset Demo Data -->
+      <button onclick="resetMockData()" class="p-1 text-[#565f89] hover:text-[#c0caf5] hover:bg-[#1f2335] rounded transition cursor-pointer" title="Reset Demo Data">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+          <path d="M21 3v5h-5" />
+          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+          <path d="M8 16H3v5" />
+        </svg>
+      </button>
+
+      <!-- Keyboard shortcuts -->
+      <button onclick="openHelpModal()" class="px-1.5 py-0.5 text-xs text-[#565f89] hover:text-[#c0caf5] bg-[#1f2335] rounded border border-[#292e42] font-mono cursor-pointer" title="Keyboard shortcuts (?)">
+        ?
+      </button>
+
+      <!-- GitHub Stars Badge link -->
+      <a href="https://github.com" target="_blank" rel="noopener noreferrer" class="hidden sm:flex items-center gap-1 px-2 py-0.5 text-xs bg-[#1f2335] hover:bg-[#24283b] text-[#e0af68] border border-[#292e42] rounded-md transition">
+        <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+        <span class="font-bold">2.4k</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- EMERGENCY RECOVERY BANNER -->
+  <div id="emergency-banner" class="bg-gradient-to-r from-[#24283b] via-[#1f2335] to-[#24283b] border-b border-[#f7768e]/40 px-4 py-2 flex items-center justify-between text-xs shrink-0 transition-all">
+    <div class="flex items-center gap-2">
+      <span class="px-1.5 py-0.5 rounded bg-[#f7768e]/20 text-[#f7768e] font-mono font-bold text-[10px] uppercase tracking-wider border border-[#f7768e]/30 flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-[#f7768e] animate-ping"></span>
+        Disaster Detected
+      </span>
+      <span class="text-[#c0caf5] font-medium">
+        HEAD moved via <code class="text-[#f7768e] bg-[#16161e] px-1 py-0.5 rounded border border-[#292e42]">git reset --hard HEAD~3</code> (10m ago). 3 unpushed commits dangling!
+      </span>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="selectEntry(1); pulseUndoButton();" class="text-[#7dcfff] hover:underline font-semibold flex items-center gap-1 cursor-pointer">
+        Jump to Pre-Disaster Snapshot (HEAD@{1}) →
+      </button>
+      <button onclick="dismissBanner()" class="text-[#565f89] hover:text-[#c0caf5] cursor-pointer">&times;</button>
+    </div>
+  </div>
+
+  <!-- MAIN 3-PANEL VIEWPORT -->
+  <main class="flex-1 flex overflow-hidden">
+    
+    <!-- LEFT PANEL: REFLOG TIMELINE (Width: 360px) -->
+    <aside class="w-80 md:w-96 bg-[#1a1b26] border-r border-[#292e42] flex flex-col shrink-0">
+      
+      <!-- Timeline Header & Filter Controls -->
+      <div class="p-3 border-b border-[#292e42] space-y-2.5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-[#7aa2f7]">Reflog Timeline</h2>
+            <span id="reflog-count-badge" class="text-[10px] bg-[#24283b] text-[#a9b1d6] px-1.5 py-0.2 rounded font-mono">10</span>
+          </div>
+          <span class="text-[11px] text-[#565f89]">Press <kbd class="px-1 bg-[#24283b] border border-[#292e42] rounded text-[10px]">j</kbd>/<kbd class="px-1 bg-[#24283b] border border-[#292e42] rounded text-[10px]">k</kbd> to nav</span>
+        </div>
+
+        <!-- Search input -->
+        <div class="relative">
+          <input 
+            type="text" 
+            id="search-input" 
+            oninput="handleSearch(this.value)" 
+            placeholder="Search commits, actions, hashes..." 
+            class="w-full bg-[#16161e] border border-[#292e42] focus:border-[#7dcfff] rounded-md px-2.5 py-1.5 text-xs text-[#c0caf5] placeholder-[#565f89] outline-none font-mono"
+          />
+          <span class="absolute right-2.5 top-1.5 text-[10px] text-[#565f89] font-mono">/</span>
+        </div>
+
+        <!-- Filter tabs -->
+        <div class="flex items-center gap-1 text-[11px]">
+          <button onclick="setFilter('all')" id="tab-all" class="px-2 py-0.5 rounded bg-[#24283b] text-white font-medium cursor-pointer">All</button>
+          <button onclick="setFilter('danger')" id="tab-danger" class="px-2 py-0.5 rounded text-[#f7768e] hover:bg-[#24283b] cursor-pointer">⚠️ Danger</button>
+          <button onclick="setFilter('branch')" id="tab-branch" class="px-2 py-0.5 rounded text-[#bb9af7] hover:bg-[#24283b] cursor-pointer">Branches</button>
+          <button onclick="setFilter('commit')" id="tab-commit" class="px-2 py-0.5 rounded text-[#7dcfff] hover:bg-[#24283b] cursor-pointer">Commits</button>
+        </div>
+      </div>
+
+      <!-- Reflog List Scroll Container -->
+      <div id="reflog-list" class="flex-1 overflow-y-auto divide-y divide-[#24283b]/60">
+        <!-- Dynamically populated entries -->
+      </div>
+
+      <!-- Bottom Mini Status -->
+      <div class="p-2.5 bg-[#16161e] border-t border-[#292e42] flex items-center justify-between text-[11px] text-[#565f89]">
+        <span class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-[#9ece6a]"></span>
+          <span>Target repo: Clean working tree</span>
+        </span>
+        <button onclick="copyCurrentHeadCmd()" class="hover:text-[#7dcfff] font-mono cursor-pointer" title="Copy git reflog command">git reflog -n 10</button>
+      </div>
+    </aside>
+
+    <!-- CENTER PANEL: DIFF PREVIEW (Flex-1) -->
+    <section class="flex-1 bg-[#1a1b26] flex flex-col min-w-0 border-r border-[#292e42]">
+      
+      <!-- Diff Control Toolbar -->
+      <div class="h-12 bg-[#1f2335] border-b border-[#292e42] flex items-center justify-between px-4 shrink-0 gap-4">
+        
+        <!-- Left: Selected Entry Info & File Picker -->
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="flex items-center gap-2 truncate">
+            <span class="text-xs text-[#565f89]">Diff:</span>
+            <span id="diff-target-hash" class="font-mono text-xs text-[#7dcfff] font-bold bg-[#16161e] px-1.5 py-0.5 rounded border border-[#292e42]">f82a91c</span>
+            <span class="text-[#565f89] text-xs">vs</span>
+            <span class="font-mono text-xs text-[#9ece6a] bg-[#16161e] px-1.5 py-0.5 rounded border border-[#292e42]">HEAD@{1} (a43c821)</span>
+          </div>
+
+          <!-- File selector tabs -->
+          <div id="file-tabs" class="hidden sm:flex items-center gap-1 text-xs">
+            <!-- Dynamic file tabs -->
+          </div>
+        </div>
+
+        <!-- Right: Diff display toggles & Actions -->
+        <div class="flex items-center gap-2 shrink-0">
+          <!-- Diff stats pill -->
+          <div class="flex items-center gap-1.5 font-mono text-xs mr-2">
+            <span id="diff-additions" class="text-[#9ece6a] font-semibold">+48</span>
+            <span class="text-[#565f89]">/</span>
+            <span id="diff-deletions" class="text-[#f7768e] font-semibold">-12</span>
+          </div>
+
+          <!-- Split / Unified Toggle -->
+          <div class="bg-[#16161e] border border-[#292e42] p-0.5 rounded flex text-xs">
+            <button id="btn-unified" onclick="setDiffMode('unified')" class="px-2 py-0.5 rounded bg-[#24283b] text-white font-medium cursor-pointer">Unified</button>
+            <button id="btn-split" onclick="setDiffMode('split')" class="px-2 py-0.5 rounded text-[#565f89] hover:text-[#c0caf5] cursor-pointer">Split</button>
+          </div>
+
+          <!-- Word-level highlight toggle -->
+          <button onclick="toggleWordDiff()" id="btn-word-diff" class="px-2 py-1 text-xs rounded bg-[#24283b] text-[#7dcfff] border border-[#7dcfff]/30 hover:bg-[#292e42] transition cursor-pointer" title="Word-level token diff highlighting">
+            Word Diff: ON
+          </button>
+
+          <!-- Copy Diff Raw -->
+          <button onclick="copyCurrentDiff()" class="p-1.5 text-[#565f89] hover:text-[#c0caf5] hover:bg-[#24283b] rounded transition cursor-pointer" title="Copy raw diff text">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- File Breadcrumb Bar -->
+      <div class="bg-[#16161e] px-4 py-1.5 border-b border-[#292e42] flex items-center justify-between text-xs font-mono text-[#7aa2f7]">
+        <div class="flex items-center gap-2">
+          <svg class="w-3.5 h-3.5 text-[#e0af68]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+          <span id="current-filename" class="text-white font-medium">src/auth/jwt-verifier.ts</span>
+          <span class="text-[10px] text-[#9ece6a] bg-[#9ece6a]/10 px-1 rounded border border-[#9ece6a]/20">RESTORED ON UNDO</span>
+        </div>
+        <div class="text-[11px] text-[#565f89]">
+          Showing changes between current HEAD and snapshot
+        </div>
+      </div>
+
+      <!-- Diff Container Viewport -->
+      <div id="diff-viewport" class="flex-1 overflow-y-auto overflow-x-auto bg-[#1a1b26] p-2 select-text font-mono text-xs">
+        <!-- Rendered Diff Lines -->
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL: SAFE UNDO DECK & ACTIONS (Width: 340px) -->
+    <aside class="w-80 md:w-88 bg-[#1f2335] flex flex-col shrink-0 overflow-y-auto">
+      
+      <!-- Right Header -->
+      <div class="p-3 border-b border-[#292e42] flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-[#bb9af7]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-white">Safe Undo Engine</h2>
+        </div>
+        <span class="text-[10px] text-[#9ece6a] bg-[#9ece6a]/15 px-1.5 py-0.5 rounded border border-[#9ece6a]/30 font-semibold">100% Client-Safe</span>
+      </div>
+
+      <div class="p-4 space-y-5 flex-1 flex flex-col">
+        
+        <!-- Snapshot Summary Card -->
+        <div class="bg-[#16161e] border border-[#292e42] rounded-lg p-3 space-y-2">
+          <div class="text-[10px] uppercase font-bold tracking-wider text-[#565f89]">Target Snapshot to Restore</div>
+          <div class="flex items-center justify-between">
+            <span id="deck-hash" class="font-mono text-sm font-bold text-[#7dcfff]">a43c821</span>
+            <span id="deck-time" class="text-xs text-[#a9b1d6]">25 mins ago</span>
+          </div>
+          <div id="deck-msg" class="text-xs text-white font-medium leading-snug">
+            feat(billing): idempotent webhook signatures for Stripe checkout sessions
+          </div>
+          <div class="flex items-center gap-2 pt-1 border-t border-[#24283b] text-[11px] text-[#565f89]">
+            <span>Author: <strong class="text-[#c0caf5]">Alex Vance</strong></span>
+            <span>·</span>
+            <span id="deck-reflog-id" class="font-mono text-[#bb9af7]">HEAD@{1}</span>
+          </div>
+        </div>
+
+        <!-- Undo Strategy Selection -->
+        <div class="space-y-2">
+          <label class="text-xs font-bold text-[#c0caf5] block">Undo Strategy</label>
+          <div class="space-y-1.5">
+            <!-- Strategy 1: Soft Undo -->
+            <label class="flex items-start gap-2.5 p-2 rounded-md border border-[#292e42] bg-[#16161e] hover:border-[#7aa2f7] cursor-pointer transition">
+              <input type="radio" name="undo-strategy" value="soft" class="mt-0.5 accent-[#7dcfff]" onchange="updateStrategy('soft')" />
+              <div>
+                <div class="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <span>Soft Undo (Recommended)</span>
+                  <span class="text-[9px] bg-[#9ece6a]/20 text-[#9ece6a] px-1 rounded font-mono">SAFE</span>
+                </div>
+                <div class="text-[11px] text-[#565f89] leading-tight">Keeps all working files staged. Nothing discarded.</div>
+              </div>
+            </label>
+
+            <!-- Strategy 2: Rescue Branch -->
+            <label class="flex items-start gap-2.5 p-2 rounded-md border border-[#292e42] bg-[#16161e] hover:border-[#bb9af7] cursor-pointer transition">
+              <input type="radio" name="undo-strategy" value="branch" class="mt-0.5 accent-[#bb9af7]" onchange="updateStrategy('branch')" />
+              <div>
+                <div class="text-xs font-semibold text-white">Create Safe Rescue Branch</div>
+                <div class="text-[11px] text-[#565f89] leading-tight">Spins up <code>rescue/a43c821</code> without moving current HEAD.</div>
+              </div>
+            </label>
+
+            <!-- Strategy 3: Hard Reset -->
+            <label class="flex items-start gap-2.5 p-2 rounded-md border border-[#f7768e]/40 bg-[#16161e] hover:border-[#f7768e] cursor-pointer transition">
+              <input type="radio" name="undo-strategy" value="hard" checked class="mt-0.5 accent-[#f7768e]" onchange="updateStrategy('hard')" />
+              <div>
+                <div class="text-xs font-semibold text-[#f7768e] flex items-center gap-1.5">
+                  <span>Hard Reset</span>
+                  <span class="text-[9px] bg-[#f7768e]/20 text-[#f7768e] px-1 rounded font-mono">REPLACE</span>
+                </div>
+                <div class="text-[11px] text-[#565f89] leading-tight">Moves HEAD & working tree directly to this snapshot.</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Big Visual SAFE UNDO Button -->
+        <div class="space-y-2 pt-2">
+          <button 
+            id="btn-big-undo" 
+            onclick="openConfirmModal()" 
+            class="w-full py-3 px-4 bg-gradient-to-r from-[#bb9af7] via-[#7dcfff] to-[#9ece6a] text-[#16161e] font-extrabold text-sm rounded-lg shadow-lg hover:brightness-110 active:scale-[0.99] transition duration-200 flex items-center justify-center gap-2 cursor-pointer pulse-undo"
+          >
+            <svg class="w-5 h-5 text-[#16161e]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+            <span>UNDO TO THIS SNAPSHOT</span>
+          </button>
+          <div class="text-center text-[10px] text-[#565f89]">Requires typing "UNDO" in confirmation modal. Zero real git changes executed.</div>
+        </div>
+
+        <!-- Generated Git Command Card -->
+        <div class="bg-[#16161e] border border-[#292e42] rounded-lg p-3 space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-[10px] uppercase font-bold text-[#565f89]">Generated Git Command</span>
+            <button onclick="copyCommand()" id="btn-copy-cmd" class="text-xs text-[#7dcfff] hover:underline flex items-center gap-1 cursor-pointer">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              <span>Copy</span>
+            </button>
+          </div>
+          <div class="bg-[#1f2335] p-2 rounded border border-[#292e42] text-xs font-mono text-[#9ece6a] break-all select-all flex items-center justify-between">
+            <code id="generated-command">git reset --hard a43c821</code>
+          </div>
+        </div>
+
+        <!-- Action Buttons: Download Patch & Step Preview -->
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="downloadPatchFile()" class="px-3 py-2 bg-[#16161e] hover:bg-[#24283b] border border-[#292e42] text-xs font-medium text-[#c0caf5] rounded-md transition flex items-center justify-center gap-1.5 cursor-pointer">
+            <svg class="w-3.5 h-3.5 text-[#e0af68]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            <span>Download .patch</span>
+          </button>
+
+          <button onclick="toggleTerminalPreview()" class="px-3 py-2 bg-[#16161e] hover:bg-[#24283b] border border-[#292e42] text-xs font-medium text-[#7aa2f7] rounded-md transition flex items-center justify-center gap-1.5 cursor-pointer">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            <span>Terminal Steps</span>
+          </button>
+        </div>
+
+        <!-- Collapsible Terminal Dry-Run Steps -->
+        <div id="terminal-steps" class="hidden bg-[#16161e] border border-[#292e42] rounded-lg p-2.5 text-[11px] font-mono text-[#a9b1d6] space-y-1">
+          <div class="text-[#565f89] text-[10px]"># Safe recommended terminal workflow:</div>
+          <div class="text-[#7dcfff]">git branch rescue-backup-HEAD</div>
+          <div class="text-[#9ece6a]" id="term-step-cmd">git reset --hard a43c821</div>
+          <div class="text-[#bb9af7]">git status</div>
+        </div>
+
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- CONFIRMATION MODAL ("Type UNDO") -->
+  <div id="confirm-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[#1f2335] border border-[#f7768e]/50 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200">
+      
+      <!-- Warning Header -->
+      <div class="flex items-start gap-3">
+        <div class="w-10 h-10 rounded-full bg-[#f7768e]/20 text-[#f7768e] flex items-center justify-center shrink-0 border border-[#f7768e]/40">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">Confirm Safe Visual Undo</h3>
+          <p class="text-xs text-[#a9b1d6] mt-0.5">
+            This will simulate rewinding your branch HEAD to snapshot <strong id="modal-hash" class="text-[#7dcfff] font-mono">a43c821</strong>.
+          </p>
+        </div>
+      </div>
+
+      <!-- Command to execute -->
+      <div class="bg-[#16161e] border border-[#292e42] p-2.5 rounded-lg text-xs font-mono text-[#9ece6a]">
+        <span class="text-[#565f89]">$ </span><span id="modal-command">git reset --hard a43c821</span>
+      </div>
+
+      <!-- Type UNDO to confirm -->
+      <div class="space-y-2">
+        <label class="text-xs text-[#c0caf5] block">
+          To prevent accidental execution, type <span class="font-bold text-[#f7768e] font-mono">UNDO</span> below:
+        </label>
+        <input 
+          type="text" 
+          id="confirm-input" 
+          oninput="handleConfirmInput(this.value)" 
+          placeholder="Type UNDO" 
+          class="w-full bg-[#16161e] border-2 border-[#292e42] focus:border-[#7dcfff] rounded-lg px-3 py-2 text-sm text-center font-mono font-bold tracking-widest text-white uppercase outline-none"
+          autocomplete="off"
+        />
+        <div id="confirm-status-msg" class="text-[11px] text-center text-[#565f89]">Enter "UNDO" to unlock button</div>
+      </div>
+
+      <!-- Modal Action Buttons -->
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button onclick="closeConfirmModal()" class="px-4 py-2 text-xs font-medium text-[#c0caf5] hover:bg-[#24283b] rounded-lg transition cursor-pointer">
+          Cancel (Esc)
+        </button>
+        <button 
+          id="btn-confirm-undo" 
+          disabled 
+          onclick="executeVisualUndo()" 
+          class="px-5 py-2 text-xs font-bold rounded-lg transition opacity-40 cursor-not-allowed bg-[#24283b] text-[#565f89] flex items-center gap-1.5"
+        >
+          <span>Proceed with Undo</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPORT REFLOG MODAL -->
+  <div id="import-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[#1f2335] border border-[#7dcfff]/40 rounded-xl max-w-xl w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-[#292e42] pb-3">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-[#7dcfff]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 17 10 11 4 5" />
+            <line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+          <h3 class="text-sm font-bold text-white">Import Your Real `git reflog` Output</h3>
+        </div>
+        <button onclick="closeImportModal()" class="text-[#565f89] hover:text-white cursor-pointer">&times;</button>
+      </div>
+
+      <p class="text-xs text-[#a9b1d6]">
+        Run <code class="bg-[#16161e] text-[#7dcfff] px-1 py-0.5 rounded font-mono">git reflog</code> in your terminal and paste the output below. Our regex parser automatically extracts hashes, actions, and commits!
+      </p>
+
+      <textarea 
+        id="import-textarea" 
+        rows="8" 
+        placeholder="e.g.
+a43c821 (HEAD -> main) HEAD@{0}: reset: moving to HEAD~2
+e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
+9d48b11 HEAD@{2}: checkout: moving from feat to main" 
+        class="w-full bg-[#16161e] border border-[#292e42] focus:border-[#7dcfff] rounded-lg p-3 text-xs font-mono text-[#c0caf5] outline-none select-text"
+      ></textarea>
+
+      <div class="flex items-center justify-between pt-2">
+        <button onclick="loadSampleTerminalReflog()" class="text-xs text-[#bb9af7] hover:underline cursor-pointer">
+          Insert Sample Real Terminal Output
+        </button>
+        <div class="flex items-center gap-2">
+          <button onclick="closeImportModal()" class="px-3 py-1.5 text-xs text-[#c0caf5] hover:bg-[#24283b] rounded transition cursor-pointer">
+            Cancel
+          </button>
+          <button onclick="parseAndApplyReflog()" class="px-4 py-1.5 text-xs font-bold bg-[#7dcfff] text-[#16161e] hover:bg-[#7aa2f7] rounded-md transition cursor-pointer">
+            Parse & Replace Data
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HELP & KEYBOARD SHORTCUTS MODAL -->
+  <div id="help-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[#1f2335] border border-[#292e42] rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-[#292e42] pb-2">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <span>⌨ Keyboard Shortcuts</span>
+        </h3>
+        <button onclick="closeHelpModal()" class="text-[#565f89] hover:text-white cursor-pointer">&times;</button>
+      </div>
+
+      <div class="space-y-2 text-xs">
+        <div class="flex justify-between py-1 border-b border-[#24283b]">
+          <span class="text-[#a9b1d6]">Select Next Entry</span>
+          <kbd class="px-1.5 py-0.5 bg-[#16161e] border border-[#292e42] rounded font-mono text-[#7dcfff]">j or ↓</kbd>
+        </div>
+        <div class="flex justify-between py-1 border-b border-[#24283b]">
+          <span class="text-[#a9b1d6]">Select Previous Entry</span>
+          <kbd class="px-1.5 py-0.5 bg-[#16161e] border border-[#292e42] rounded font-mono text-[#7dcfff]">k or ↑</kbd>
+        </div>
+        <div class="flex justify-between py-1 border-b border-[#24283b]">
+          <span class="text-[#a9b1d6]">Open Safe Undo Dialog</span>
+          <kbd class="px-1.5 py-0.5 bg-[#16161e] border border-[#292e42] rounded font-mono text-[#9ece6a]">u or ⌘Z</kbd>
+        </div>
+        <div class="flex justify-between py-1 border-b border-[#24283b]">
+          <span class="text-[#a9b1d6]">Copy Git Command</span>
+          <kbd class="px-1.5 py-0.5 bg-[#16161e] border border-[#292e42] rounded font-mono text-[#e0af68]">c</kbd>
+        </div>
+        <div class="flex justify-between py-1 border-b border-[#24283b]">
+          <span class="text-[#a9b1d6]">Download Git .patch</span>
+          <kbd class="px-1.5 py-0.5 bg-[#16161e] border border-[#292e42] rounded font-mono text-[#bb9af7]">d</kbd>
+        </div>
+        <div class="flex justify-between py-1 border-b border-[#24283b]">
+          <span class="text-[#a9b1d6]">Start 15s Demo Tour</span>
+          <kbd class="px-1.5 py-0.5 bg-[#16161e] border border-[#292e42] rounded font-mono text-[#f7768e]">t</kbd>
+        </div>
+        <div class="flex justify-between py-1">
+          <span class="text-[#a9b1d6]">Close any dialog</span>
+          <kbd class="px-1.5 py-0.5 bg-[#16161e] border border-[#292e42] rounded font-mono text-[#565f89]">Esc</kbd>
+        </div>
+      </div>
+
+      <div class="text-[11px] text-[#565f89] pt-2 border-t border-[#292e42] text-center">
+        Built for developers who value their sanity after a late-night git mistake.
+      </div>
+    </div>
+  </div>
+
+  <!-- TOKYO NIGHT TOAST NOTIFICATION -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-[#1f2335] border border-[#9ece6a] text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-3 transition-all duration-300 transform translate-y-20 opacity-0 pointer-events-none z-50">
+    <div id="toast-icon" class="w-6 h-6 rounded-full bg-[#9ece6a]/20 text-[#9ece6a] flex items-center justify-center shrink-0">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+    </div>
+    <div>
+      <div id="toast-title" class="text-xs font-bold text-white">Command Copied!</div>
+      <div id="toast-msg" class="text-[11px] text-[#a9b1d6]">Paste into your terminal to execute.</div>
+    </div>
+  </div>
+
+  <!-- COMPLETE CLIENT-SIDE LOGIC -->
+  <script>
+    /**
+     * git-undo-gui Core Application Logic
+     * Fully self-contained, works 100% offline with zero dependencies.
+     */
+
+    // 10 High-Stakes Mock Git Reflog Entries
+    const DEFAULT_REFLOG = [
+      {
+        id: 0,
+        hash: "f82a91c",
+        ref: "HEAD@{0}",
+        action: "reset: moving to HEAD~3",
+        actionType: "danger",
+        typeBadge: "reset --hard",
+        branch: "main",
+        timeAgo: "10m ago",
+        author: "Alex Vance <alex@company.io>",
+        fullMsg: "reset: moving to HEAD~3 (Accidental hard reset! Lost 3 commits)",
+        files: [
+          {
+            name: "src/auth/jwt-verifier.ts",
+            additions: 18,
+            deletions: 4,
+            diff: [
+              { type: "hunk", text: "@@ -24,8 +24,12 @@ export class JwtVerifier {" },
+              { type: "context", text: "   public async verifyToken(token: string): Promise<UserClaims> {" },
+              { type: "context", text: "     const decoded = jwt.decode(token, { complete: true });" },
+              { type: "del", text: "     if (!decoded) throw new Error('Invalid token format');", delWords: ["throw new Error('Invalid token format')"] },
+              { type: "add", text: "     if (!decoded?.header?.kid) throw new AuthSecurityError('Missing kid in JWT header');", addWords: ["decoded?.header?.kid", "throw new AuthSecurityError('Missing kid in JWT header')"] },
+              { type: "context", text: "     const signingKey = await this.keyVault.getKey(decoded.header.kid);" },
+              { type: "del", text: "     return jwt.verify(token, signingKey) as UserClaims;", delWords: ["jwt.verify(token, signingKey)"] },
+              { type: "add", text: "     return jwt.verify(token, signingKey, { clockTolerance: 60, algorithms: ['RS256'] }) as UserClaims;", addWords: ["{ clockTolerance: 60, algorithms: ['RS256'] }"] },
+              { type: "context", text: "   }" },
+              { type: "add", text: "   // Prevents replay attack on clock skew window", addWords: ["Prevents replay attack on clock skew window"] },
+              { type: "context", text: " }" }
+            ]
+          },
+          {
+            name: "src/routes/webhook.ts",
+            additions: 24,
+            deletions: 8,
+            diff: [
+              { type: "hunk", text: "@@ -12,7 +12,14 @@ router.post('/v1/webhooks/stripe', async (req, res) => {" },
+              { type: "context", text: "   const sig = req.headers['stripe-signature'];" },
+              { type: "del", text: "   const event = req.body;", delWords: ["req.body"] },
+              { type: "add", text: "   const event = stripe.webhooks.constructEvent(req.rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET);", addWords: ["stripe.webhooks.constructEvent(req.rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET)"] },
+              { type: "context", text: "   switch (event.type) {" },
+              { type: "add", text: "     case 'checkout.session.completed':", addWords: ["case 'checkout.session.completed':"] },
+              { type: "add", text: "       await handleCheckoutSessionCompleted(event.data.object);", addWords: ["await handleCheckoutSessionCompleted(event.data.object);"] },
+              { type: "add", text: "       break;", addWords: ["break;"] }
+            ]
+          }
+        ]
+      },
+      {
+        id: 1,
+        hash: "a43c821",
+        ref: "HEAD@{1}",
+        action: "push: forced-update origin/main",
+        actionType: "danger",
+        typeBadge: "force push",
+        branch: "main",
+        timeAgo: "25m ago",
+        author: "Alex Vance <alex@company.io>",
+        fullMsg: "feat(billing): idempotent webhook signatures for Stripe checkout sessions",
+        files: [
+          {
+            name: "src/billing/idempotency.ts",
+            additions: 32,
+            deletions: 2,
+            diff: [
+              { type: "hunk", text: "@@ -1,6 +1,18 @@ import { redis } from '../config/redis';" },
+              { type: "add", text: "export async function acquireLock(key: string, ttlMs = 5000): Promise<boolean> {", addWords: ["acquireLock", "ttlMs = 5000"] },
+              { type: "add", text: "  const acquired = await redis.set(`lock:${key}`, '1', 'PX', ttlMs, 'NX');", addWords: ["redis.set(`lock:${key}`, '1', 'PX', ttlMs, 'NX')"] },
+              { type: "add", text: "  return acquired === 'OK';", addWords: ["return acquired === 'OK';"] },
+              { type: "add", text: "}", addWords: [] },
+              { type: "context", text: "export async function recordWebhookReceipt(eventId: string) {" },
+              { type: "del", text: "  return db.query('INSERT INTO webhooks (id) VALUES ($1)', [eventId]);", delWords: ["INSERT INTO webhooks"] },
+              { type: "add", text: "  return db.query('INSERT INTO webhooks (id, processed_at) VALUES ($1, NOW()) ON CONFLICT DO NOTHING', [eventId]);", addWords: ["processed_at", "ON CONFLICT DO NOTHING"] }
+            ]
+          }
+        ]
+      },
+      {
+        id: 2,
+        hash: "e17b3d9",
+        ref: "HEAD@{2}",
+        action: "branch: -D feat/auth-pkce-flow",
+        actionType: "branch",
+        typeBadge: "deleted branch",
+        branch: "feat/auth",
+        timeAgo: "1h ago",
+        author: "Sarah Connor <sarah@dev.org>",
+        fullMsg: "branch -D: accidentally deleted feat/auth-pkce-flow before merging pull request",
+        files: [
+          {
+            name: "src/auth/pkce.ts",
+            additions: 45,
+            deletions: 0,
+            diff: [
+              { type: "hunk", text: "@@ -0,0 +1,12 @@ import crypto from 'node:crypto';" },
+              { type: "add", text: "+export function generateCodeVerifier(): string {", addWords: ["generateCodeVerifier"] },
+              { type: "add", text: "+  return crypto.randomBytes(32).toString('base64url');", addWords: ["randomBytes(32)"] },
+              { type: "add", text: "+}", addWords: [] },
+              { type: "add", text: "+export function generateCodeChallenge(verifier: string): string {", addWords: ["generateCodeChallenge"] },
+              { type: "add", text: "+  return crypto.createHash('sha256').update(verifier).digest('base64url');", addWords: ["createHash('sha256')"] }
+            ]
+          }
+        ]
+      },
+      {
+        id: 3,
+        hash: "9d48b11",
+        ref: "HEAD@{3}",
+        action: "rebase (finish): returning to refs/heads/main",
+        actionType: "danger",
+        typeBadge: "rebase conflict",
+        branch: "main",
+        timeAgo: "2h ago",
+        author: "Liam Chen <liam@acme.dev>",
+        fullMsg: "rebase onto origin/main: dropped commits during conflict resolution",
+        files: [
+          {
+            name: "src/config/database.ts",
+            additions: 14,
+            deletions: 11,
+            diff: [
+              { type: "hunk", text: "@@ -15,7 +15,9 @@ export const dbPool = new Pool({" },
+              { type: "del", text: "  connectionTimeoutMillis: 2000,", delWords: ["2000"] },
+              { type: "add", text: "  connectionTimeoutMillis: 10000,", addWords: ["10000"] },
+              { type: "add", text: "  ssl: { rejectUnauthorized: false },", addWords: ["rejectUnauthorized: false"] },
+              { type: "context", text: "  max: 20" }
+            ]
+          }
+        ]
+      },
+      {
+        id: 4,
+        hash: "c72e40f",
+        ref: "HEAD@{4}",
+        action: "commit (amend): fix token expiration edge case",
+        actionType: "commit",
+        typeBadge: "amend",
+        branch: "fix/jwt",
+        timeAgo: "3h ago",
+        author: "Alex Vance <alex@company.io>",
+        fullMsg: "fix(jwt): clock skew leeway of 60 seconds on exp validation",
+        files: [
+          {
+            name: "src/auth/jwt-verifier.ts",
+            additions: 6,
+            deletions: 2,
+            diff: [
+              { type: "hunk", text: "@@ -40,3 +40,5 @@ export function getLeeway() {" },
+              { type: "del", text: "  return 0;", delWords: ["0;"] },
+              { type: "add", text: "  return 60; // 60s leeway for distributed clock drift", addWords: ["60; // 60s leeway"] }
+            ]
+          }
+        ]
+      },
+      {
+        id: 5,
+        hash: "5b18aa2",
+        ref: "HEAD@{5}",
+        action: "merge pr/412: stripe webhook signature validation",
+        actionType: "commit",
+        typeBadge: "merge",
+        branch: "main",
+        timeAgo: "5h ago",
+        author: "Elena Rostova <elena@payments.net>",
+        fullMsg: "Merge pull request #412 from payments/stripe-webhooks-v2",
+        files: [
+          {
+            name: "src/routes/api.ts",
+            additions: 12,
+            deletions: 3,
+            diff: [
+              { type: "hunk", text: "@@ -8,3 +8,7 @@ router.use('/auth', authRoutes);" },
+              { type: "add", text: "+router.use('/webhooks', webhookRoutes);", addWords: ["webhookRoutes"] },
+              { type: "context", text: " export default router;" }
+            ]
+          }
+        ]
+      },
+      {
+        id: 6,
+        hash: "3e901bc",
+        ref: "HEAD@{6}",
+        action: "checkout: moving from feat/billing to main",
+        actionType: "branch",
+        typeBadge: "checkout",
+        branch: "main",
+        timeAgo: "6h ago",
+        author: "Alex Vance <alex@company.io>",
+        fullMsg: "checkout: switch context to verify production hotfix deployment",
+        files: [
+          {
+            name: "package.json",
+            additions: 2,
+            deletions: 2,
+            diff: [
+              { type: "hunk", text: "@@ -3,2 +3,2 @@ {" },
+              { type: "del", text: "  \"version\": \"1.4.2-beta\",", delWords: ["1.4.2-beta"] },
+              { type: "add", text: "  \"version\": \"1.4.2\",", addWords: ["1.4.2"] }
+            ]
+          }
+        ]
+      },
+      {
+        id: 7,
+        hash: "8a04f2d",
+        ref: "HEAD@{7}",
+        action: "commit: drop legacy postgres credentials table",
+        actionType: "commit",
+        typeBadge: "commit",
+        branch: "feat/billing",
+        timeAgo: "8h ago",
+        author: "DevOps Bot <ci@cloud.internal>",
+        fullMsg: "chore(db): migrate connection string to secret manager vault",
+        files: [
+          {
+            name: "docker-compose.yml",
+            additions: 4,
+            deletions: 8,
+            diff: [
+              { type: "hunk", text: "@@ -10,6 +10,4 @@ services:" },
+              { type: "del", text: "      - POSTGRES_PASSWORD=supersecret_dev_pass", delWords: ["supersecret_dev_pass"] },
+              { type: "add", text: "      - VAULT_SECRET_ID=${VAULT_SECRET_ID}", addWords: ["VAULT_SECRET_ID"] }
+            ]
+          }
+        ]
+      },
+      {
+        id: 8,
+        hash: "1c92e74",
+        ref: "HEAD@{8}",
+        action: "stash@{0}: WIP on stripe migration checkout",
+        actionType: "branch",
+        typeBadge: "stash",
+        branch: "feat/billing",
+        timeAgo: "yesterday",
+        author: "Alex Vance <alex@company.io>",
+        fullMsg: "WIP on stripe checkout idempotency keys & redis locks",
+        files: [
+          {
+            name: "src/billing/checkout.ts",
+            additions: 19,
+            deletions: 4,
+            diff: [
+              { type: "hunk", text: "@@ -1,5 +1,12 @@" },
+              { type: "add", text: "+export async function createCheckoutSession(customerId: string) {", addWords: ["createCheckoutSession"] },
+              { type: "add", text: "+  // Implementation in progress", addWords: ["Implementation in progress"] }
+            ]
+          }
+        ]
+      },
+      {
+        id: 9,
+        hash: "74f28e0",
+        ref: "HEAD@{9}",
+        action: "cherry-pick: hotfix zero-day CORS leak",
+        actionType: "commit",
+        typeBadge: "cherry-pick",
+        branch: "main",
+        timeAgo: "2d ago",
+        author: "Security Team <security@corp.io>",
+        fullMsg: "security(cors): restrict allowed origins strictly to production domains",
+        files: [
+          {
+            name: "src/server.ts",
+            additions: 6,
+            deletions: 2,
+            diff: [
+              { type: "hunk", text: "@@ -20,2 +20,4 @@ app.use(cors({" },
+              { type: "del", text: "  origin: '*'", delWords: ["'*'"] },
+              { type: "add", text: "  origin: ['https://app.company.io', 'https://admin.company.io'],", addWords: ["['https://app.company.io', 'https://admin.company.io']"] },
+              { type: "add", text: "  credentials: true", addWords: ["credentials: true"] }
+            ]
+          }
+        ]
+      }
+    ];
+
+    // State Variables
+    let reflogEntries = [...DEFAULT_REFLOG];
+    let selectedIndex = 1; // Default to pre-disaster snapshot a43c821
+    let selectedFileIndex = 0;
+    let currentFilter = "all";
+    let searchQuery = "";
+    let diffMode = "unified"; // 'unified' or 'split'
+    let isWordDiffOn = true;
+    let selectedStrategy = "hard"; // 'soft', 'branch', or 'hard'
+    let isTourRunning = false;
+
+    // Web Audio Synthesizer for 100% offline audio chimes
+    let audioCtx = null;
+    function playChime(type) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        if (type === 'success') {
+          // Cheerful C major arpeggio
+          [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) => {
+            const noteOsc = audioCtx.createOscillator();
+            const noteGain = audioCtx.createGain();
+            noteOsc.connect(noteGain);
+            noteGain.connect(audioCtx.destination);
+            noteOsc.frequency.setValueAtTime(freq, now + i * 0.08);
+            noteGain.gain.setValueAtTime(0.12, now + i * 0.08);
+            noteGain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.3);
+            noteOsc.start(now + i * 0.08);
+            noteOsc.stop(now + i * 0.08 + 0.35);
+          });
+        } else if (type === 'click') {
+          osc.frequency.setValueAtTime(800, now);
+          osc.frequency.exponentialRampToValueAtTime(400, now + 0.05);
+          gain.gain.setValueAtTime(0.05, now);
+          gain.gain.linearRampToValueAtTime(0.001, now + 0.05);
+          osc.start(now);
+          osc.stop(now + 0.05);
+        }
+      } catch (e) {
+        // Audio API optional fallback
+      }
+    }
+
+    // Pure Canvas Confetti Engine (Zero external dependencies)
+    function launchConfetti() {
+      const canvas = document.getElementById("confetti-canvas");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      const particles = [];
+      const colors = ["#7dcfff", "#bb9af7", "#9ece6a", "#f7768e", "#e0af68", "#7aa2f7", "#ff007c"];
+
+      for (let i = 0; i < 120; i++) {
+        particles.push({
+          x: canvas.width / 2 + (Math.random() - 0.5) * 200,
+          y: canvas.height * 0.45 + (Math.random() - 0.5) * 100,
+          w: Math.random() * 8 + 4,
+          h: Math.random() * 6 + 3,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          vx: (Math.random() - 0.5) * 16,
+          vy: (Math.random() - 0.7) * 18,
+          rotation: Math.random() * 360,
+          rotationSpeed: (Math.random() - 0.5) * 12,
+          gravity: 0.35,
+          opacity: 1
+        });
+      }
+
+      let animationFrame;
+      function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let active = 0;
+
+        particles.forEach(p => {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vy += p.gravity;
+          p.rotation += p.rotationSpeed;
+          p.opacity -= 0.007;
+
+          if (p.opacity > 0 && p.y < canvas.height + 20) {
+            active++;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate((p.rotation * Math.PI) / 180);
+            ctx.globalAlpha = Math.max(0, p.opacity);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+            ctx.restore();
+          }
+        });
+
+        if (active > 0) {
+          animationFrame = requestAnimationFrame(animate);
+        } else {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          cancelAnimationFrame(animationFrame);
+        }
+      }
+      animate();
+    }
+
+    // Render Reflog List
+    function renderReflogList() {
+      const container = document.getElementById("reflog-list");
+      container.innerHTML = "";
+
+      const filtered = reflogEntries.filter(entry => {
+        const matchesFilter = 
+          currentFilter === "all" ? true :
+          currentFilter === "danger" ? entry.actionType === "danger" :
+          currentFilter === "branch" ? entry.actionType === "branch" :
+          currentFilter === "commit" ? entry.actionType === "commit" : true;
+
+        const q = searchQuery.toLowerCase();
+        const matchesSearch = !q || 
+          entry.hash.toLowerCase().includes(q) || 
+          entry.ref.toLowerCase().includes(q) || 
+          entry.action.toLowerCase().includes(q) ||
+          entry.fullMsg.toLowerCase().includes(q);
+
+        return matchesFilter && matchesSearch;
+      });
+
+      document.getElementById("reflog-count-badge").innerText = filtered.length;
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="p-8 text-center text-xs text-[#565f89]">
+            <p>No matching reflog entries found.</p>
+            <button onclick="resetFilters()" class="mt-2 text-[#7dcfff] hover:underline">Clear search & filters</button>
+          </div>
+        `;
+        return;
+      }
+
+      filtered.forEach(entry => {
+        const isSelected = entry.id === reflogEntries[selectedIndex]?.id;
+        const div = document.createElement("div");
+        div.className = `p-3 transition-colors cursor-pointer border-l-2 relative ${
+          isSelected 
+            ? "bg-[#24283b] border-[#7dcfff] text-white" 
+            : "bg-[#1a1b26] hover:bg-[#1f2335] border-transparent text-[#a9b1d6]"
+        }`;
+
+        let badgeBg = "bg-[#24283b] text-[#7aa2f7] border-[#292e42]";
+        if (entry.actionType === "danger") badgeBg = "bg-[#f7768e]/15 text-[#f7768e] border-[#f7768e]/30";
+        if (entry.actionType === "branch") badgeBg = "bg-[#bb9af7]/15 text-[#bb9af7] border-[#bb9af7]/30";
+        if (entry.actionType === "commit") badgeBg = "bg-[#9ece6a]/15 text-[#9ece6a] border-[#9ece6a]/30";
+
+        div.onclick = () => {
+          playChime('click');
+          selectEntry(reflogEntries.findIndex(e => e.id === entry.id));
+        };
+
+        div.innerHTML = `
+          <div class="flex items-center justify-between gap-1 text-[11px] mb-1">
+            <div class="flex items-center gap-1.5 font-mono">
+              <span class="font-bold text-[#7dcfff]">${entry.hash}</span>
+              <span class="text-[#565f89]">${entry.ref}</span>
+            </div>
+            <span class="text-[10px] text-[#565f89]">${entry.timeAgo}</span>
+          </div>
+
+          <div class="text-xs font-semibold ${isSelected ? 'text-white' : 'text-[#c0caf5]'} line-clamp-1 mb-1.5">
+            ${escapeHtml(entry.action)}
+          </div>
+
+          <div class="flex items-center justify-between text-[10px]">
+            <span class="px-1.5 py-0.5 rounded font-mono font-medium border ${badgeBg}">
+              ${entry.typeBadge}
+            </span>
+            <span class="text-[#565f89] font-mono">🌿 ${entry.branch}</span>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    // Select Entry & Update All Panels
+    function selectEntry(index) {
+      if (index < 0 || index >= reflogEntries.length) return;
+      selectedIndex = index;
+      selectedFileIndex = 0;
+      renderReflogList();
+      renderDiffPanel();
+      renderRightDeck();
+    }
+
+    // Render Diff Preview Panel
+    function renderDiffPanel() {
+      const entry = reflogEntries[selectedIndex];
+      if (!entry) return;
+
+      document.getElementById("diff-target-hash").innerText = entry.hash;
+
+      // File tabs
+      const tabsContainer = document.getElementById("file-tabs");
+      tabsContainer.innerHTML = "";
+      
+      const files = entry.files || [];
+      if (files.length === 0) {
+        files.push({
+          name: "commit-snapshot.patch",
+          additions: 12,
+          deletions: 4,
+          diff: [
+            { type: "hunk", text: `@@ -1,4 +1,8 @@ Snapshot for ${entry.hash}` },
+            { type: "context", text: ` Commit: ${entry.fullMsg}` },
+            { type: "context", text: ` Branch: ${entry.branch}` },
+            { type: "add", text: `+ Restores commit state to tree` }
+          ]
+        });
+      }
+
+      files.forEach((file, fIdx) => {
+        const btn = document.createElement("button");
+        const isActive = fIdx === selectedFileIndex;
+        btn.className = `px-2 py-0.5 rounded transition cursor-pointer font-mono ${
+          isActive 
+            ? "bg-[#292e42] text-[#7dcfff] border border-[#7dcfff]/30" 
+            : "text-[#565f89] hover:text-[#c0caf5] hover:bg-[#24283b]"
+        }`;
+        btn.innerHTML = `${file.name.split('/').pop()} <span class="text-[10px] text-[#9ece6a]">+${file.additions}</span>`;
+        btn.onclick = () => {
+          selectedFileIndex = fIdx;
+          renderDiffPanel();
+        };
+        tabsContainer.appendChild(btn);
+      });
+
+      const currentFile = files[selectedFileIndex] || files[0];
+      document.getElementById("current-filename").innerText = currentFile.name;
+      document.getElementById("diff-additions").innerText = `+${currentFile.additions}`;
+      document.getElementById("diff-deletions").innerText = `-${currentFile.deletions}`;
+
+      // Render Diff Viewport with word-level highlight
+      const viewport = document.getElementById("diff-viewport");
+      viewport.innerHTML = "";
+
+      let oldLine = 12;
+      let newLine = 12;
+
+      currentFile.diff.forEach(item => {
+        const lineDiv = document.createElement("div");
+        lineDiv.className = `diff-line ${item.type}`;
+
+        if (item.type === "hunk") {
+          lineDiv.innerHTML = `
+            <div class="diff-gutter text-center">...</div>
+            <div class="diff-symbol">@</div>
+            <div class="diff-content text-[#7aa2f7]">${escapeHtml(item.text)}</div>
+          `;
+        } else if (item.type === "del") {
+          let contentHtml = escapeHtml(item.text);
+          if (isWordDiffOn && item.delWords) {
+            item.delWords.forEach(w => {
+              contentHtml = contentHtml.replace(escapeHtml(w), `<span class="w-del">${escapeHtml(w)}</span>`);
+            });
+          }
+          lineDiv.innerHTML = `
+            <div class="diff-gutter">${oldLine++}</div>
+            <div class="diff-symbol text-[#f7768e]">-</div>
+            <div class="diff-content">${contentHtml}</div>
+          `;
+        } else if (item.type === "add") {
+          let contentHtml = escapeHtml(item.text);
+          if (isWordDiffOn && item.addWords) {
+            item.addWords.forEach(w => {
+              contentHtml = contentHtml.replace(escapeHtml(w), `<span class="w-add">${escapeHtml(w)}</span>`);
+            });
+          }
+          lineDiv.innerHTML = `
+            <div class="diff-gutter">${newLine++}</div>
+            <div class="diff-symbol text-[#9ece6a]">+</div>
+            <div class="diff-content">${contentHtml}</div>
+          `;
+        } else {
+          lineDiv.innerHTML = `
+            <div class="diff-gutter">${oldLine++}</div>
+            <div class="diff-symbol text-[#565f89]"> </div>
+            <div class="diff-content text-[#a9b1d6]">${escapeHtml(item.text)}</div>
+          `;
+          newLine++;
+        }
+        viewport.appendChild(lineDiv);
+      });
+    }
+
+    // Render Right Panel Deck
+    function renderRightDeck() {
+      const entry = reflogEntries[selectedIndex];
+      if (!entry) return;
+
+      document.getElementById("deck-hash").innerText = entry.hash;
+      document.getElementById("deck-time").innerText = entry.timeAgo;
+      document.getElementById("deck-msg").innerText = entry.fullMsg;
+      document.getElementById("deck-reflog-id").innerText = entry.ref;
+
+      // Update Generated Command
+      let cmd = "";
+      if (selectedStrategy === "soft") {
+        cmd = `git reset --soft ${entry.hash}`;
+      } else if (selectedStrategy === "branch") {
+        cmd = `git branch rescue-${entry.hash} ${entry.hash}`;
+      } else {
+        cmd = `git reset --hard ${entry.hash}`;
+      }
+
+      document.getElementById("generated-command").innerText = cmd;
+      document.getElementById("term-step-cmd").innerText = cmd;
+      document.getElementById("modal-hash").innerText = entry.hash;
+      document.getElementById("modal-command").innerText = cmd;
+    }
+
+    function updateStrategy(strat) {
+      selectedStrategy = strat;
+      renderRightDeck();
+    }
+
+    // Filtering & Searching
+    function setFilter(filter) {
+      currentFilter = filter;
+      ["all", "danger", "branch", "commit"].forEach(f => {
+        const btn = document.getElementById(`tab-${f}`);
+        if (f === filter) {
+          btn.className = "px-2 py-0.5 rounded bg-[#24283b] text-white font-medium cursor-pointer";
+        } else {
+          btn.className = "px-2 py-0.5 rounded text-[#565f89] hover:bg-[#24283b] cursor-pointer";
+        }
+      });
+      renderReflogList();
+    }
+
+    function handleSearch(val) {
+      searchQuery = val;
+      renderReflogList();
+    }
+
+    function resetFilters() {
+      searchQuery = "";
+      currentFilter = "all";
+      document.getElementById("search-input").value = "";
+      setFilter("all");
+    }
+
+    // Word Diff Toggle
+    function toggleWordDiff() {
+      isWordDiffOn = !isWordDiffOn;
+      const btn = document.getElementById("btn-word-diff");
+      if (isWordDiffOn) {
+        btn.innerText = "Word Diff: ON";
+        btn.className = "px-2 py-1 text-xs rounded bg-[#24283b] text-[#7dcfff] border border-[#7dcfff]/30 hover:bg-[#292e42] transition cursor-pointer";
+      } else {
+        btn.innerText = "Word Diff: OFF";
+        btn.className = "px-2 py-1 text-xs rounded bg-[#16161e] text-[#565f89] border border-[#292e42] hover:bg-[#24283b] transition cursor-pointer";
+      }
+      renderDiffPanel();
+    }
+
+    function setDiffMode(mode) {
+      diffMode = mode;
+      const uBtn = document.getElementById("btn-unified");
+      const sBtn = document.getElementById("btn-split");
+      if (mode === "unified") {
+        uBtn.className = "px-2 py-0.5 rounded bg-[#24283b] text-white font-medium cursor-pointer";
+        sBtn.className = "px-2 py-0.5 rounded text-[#565f89] hover:text-[#c0caf5] cursor-pointer";
+      } else {
+        sBtn.className = "px-2 py-0.5 rounded bg-[#24283b] text-white font-medium cursor-pointer";
+        uBtn.className = "px-2 py-0.5 rounded text-[#565f89] hover:text-[#c0caf5] cursor-pointer";
+      }
+      showToast("View mode updated", `Switched to ${mode} diff view`);
+    }
+
+    // Safe Confirmation Modal
+    function openConfirmModal() {
+      playChime('click');
+      const modal = document.getElementById("confirm-modal");
+      modal.classList.remove("hidden");
+      const input = document.getElementById("confirm-input");
+      input.value = "";
+      handleConfirmInput("");
+      setTimeout(() => input.focus(), 50);
+    }
+
+    function closeConfirmModal() {
+      document.getElementById("confirm-modal").classList.add("hidden");
+    }
+
+    function handleConfirmInput(val) {
+      const clean = val.trim().toUpperCase();
+      const btn = document.getElementById("btn-confirm-undo");
+      const msg = document.getElementById("confirm-status-msg");
+
+      if (clean === "UNDO") {
+        btn.disabled = false;
+        btn.className = "px-5 py-2 text-xs font-bold rounded-lg transition bg-[#9ece6a] text-[#16161e] hover:brightness-110 cursor-pointer shadow-lg shadow-[#9ece6a]/30 flex items-center gap-1.5 animate-pulse";
+        msg.innerText = "✓ Safety check unlocked. Click to proceed.";
+        msg.className = "text-[11px] text-center text-[#9ece6a] font-semibold";
+      } else {
+        btn.disabled = true;
+        btn.className = "px-5 py-2 text-xs font-bold rounded-lg transition opacity-40 cursor-not-allowed bg-[#24283b] text-[#565f89] flex items-center gap-1.5";
+        msg.innerText = 'Enter "UNDO" to unlock button';
+        msg.className = "text-[11px] text-center text-[#565f89]";
+      }
+    }
+
+    // Execute Visual Undo Action
+    function executeVisualUndo() {
+      closeConfirmModal();
+      playChime('success');
+      launchConfetti();
+
+      const target = reflogEntries[selectedIndex];
+      const cmd = document.getElementById("generated-command").innerText;
+
+      // Copy to clipboard
+      navigator.clipboard?.writeText(cmd).catch(() => {});
+
+      // Add a simulated new reflog entry
+      const newEntry = {
+        id: Date.now(),
+        hash: target.hash,
+        ref: "HEAD@{0}",
+        action: `visual-undo: restored to ${target.hash}`,
+        actionType: "commit",
+        typeBadge: "undo success",
+        branch: target.branch || "main",
+        timeAgo: "just now",
+        author: "git-undo-gui (you)",
+        fullMsg: `Restored working tree to ${target.hash} (${target.fullMsg.substring(0, 45)}...)`,
+        files: target.files
+      };
+
+      reflogEntries.unshift(newEntry);
+      selectedIndex = 0;
+      renderReflogList();
+      renderDiffPanel();
+      renderRightDeck();
+
+      // Dismiss emergency banner
+      const banner = document.getElementById("emergency-banner");
+      if (banner) {
+        banner.innerHTML = `
+          <div class="flex items-center gap-2">
+            <span class="px-1.5 py-0.5 rounded bg-[#9ece6a]/20 text-[#9ece6a] font-mono font-bold text-[10px] uppercase border border-[#9ece6a]/30">
+              ✓ RECOVERED
+            </span>
+            <span class="text-[#9ece6a] font-semibold">
+              Repository HEAD safely restored to ${target.hash}! Disaster resolved.
+            </span>
+          </div>
+          <button onclick="dismissBanner()" class="text-[#565f89] hover:text-[#c0caf5] cursor-pointer">&times;</button>
+        `;
+      }
+
+      showToast("🎉 Disaster Averted!", `Restored snapshot ${target.hash}. Command copied.`);
+    }
+
+    // Pulse Undo Button for Attention
+    function pulseUndoButton() {
+      const btn = document.getElementById("btn-big-undo");
+      btn.scrollIntoView({ behavior: "smooth" });
+      btn.classList.add("pulse-undo");
+    }
+
+    // Toast Notification System
+    let toastTimeout = null;
+    function showToast(title, message) {
+      const toast = document.getElementById("toast");
+      document.getElementById("toast-title").innerText = title;
+      document.getElementById("toast-msg").innerText = message;
+
+      toast.classList.remove("translate-y-20", "opacity-0", "pointer-events-none");
+      toast.classList.add("translate-y-0", "opacity-100");
+
+      if (toastTimeout) clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toast.classList.add("translate-y-20", "opacity-0", "pointer-events-none");
+        toast.classList.remove("translate-y-0", "opacity-100");
+      }, 3500);
+    }
+
+    // Copy Generated Command
+    function copyCommand() {
+      const cmd = document.getElementById("generated-command").innerText;
+      navigator.clipboard?.writeText(cmd).then(() => {
+        playChime('click');
+        showToast("Copied to Clipboard", cmd);
+      }).catch(() => {
+        showToast("Command", cmd);
+      });
+    }
+
+    function copyCurrentHeadCmd() {
+      navigator.clipboard?.writeText("git reflog -n 10").then(() => {
+        showToast("Command Copied", "git reflog -n 10");
+      });
+    }
+
+    function copyCurrentDiff() {
+      const entry = reflogEntries[selectedIndex];
+      const file = entry.files?.[selectedFileIndex] || entry.files?.[0];
+      if (!file) return;
+      const text = file.diff.map(d => `${d.type === 'add' ? '+' : d.type === 'del' ? '-' : ' '}${d.text}`).join('\n');
+      navigator.clipboard?.writeText(text).then(() => {
+        showToast("Diff Copied", `${file.name} diff copied to clipboard`);
+      });
+    }
+
+    // Download .patch file
+    function downloadPatchFile() {
+      const entry = reflogEntries[selectedIndex];
+      const file = entry.files?.[selectedFileIndex] || entry.files?.[0];
+      const patchContent = 
+`From: git-undo-gui <undo@git-undo.dev>
+Date: Fri, 6 Nov 2026 06:48:41 +0000
+Subject: [PATCH] Undo restoration to ${entry.hash} (${entry.fullMsg})
+
+---
+ ${file.name} | ${file.additions + file.deletions} +${file.additions}-${file.deletions}
+ 1 file changed, ${file.additions} insertions(+), ${file.deletions} deletions(-)
+
+diff --git a/${file.name} b/${file.name}
+${file.diff.map(d => d.text).join('\n')}
+-- 
+git-undo-gui v1.0.0`;
+
+      const blob = new Blob([patchContent], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `git-undo-${entry.hash}.patch`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast("Patch Downloaded", `Saved git-undo-${entry.hash}.patch`);
+    }
+
+    function toggleTerminalPreview() {
+      const el = document.getElementById("terminal-steps");
+      el.classList.toggle("hidden");
+    }
+
+    function dismissBanner() {
+      const b = document.getElementById("emergency-banner");
+      b.style.display = "none";
+    }
+
+    // Import Reflog Parser
+    function openImportModal() {
+      document.getElementById("import-modal").classList.remove("hidden");
+    }
+    function closeImportModal() {
+      document.getElementById("import-modal").classList.add("hidden");
+    }
+
+    function loadSampleTerminalReflog() {
+      const sample = 
+`b81a29f (HEAD -> main) HEAD@{0}: reset: moving to HEAD~2
+3a4f891 HEAD@{1}: commit: fix(payment): double-charge prevention lock
+92e10bc HEAD@{2}: commit: feat(crypto): Ed25519 webhook signatures
+f481c02 HEAD@{3}: branch: -D feature/cart-abandonment
+77a19d4 HEAD@{4}: checkout: moving from main to feat/stripe
+1204b11 HEAD@{5}: commit (amend): adjust redis lock timeout to 5000ms
+c931088 HEAD@{6}: merge pr/318: database pooling optimization
+491b29a HEAD@{7}: checkout: moving from hotfix/cors to main`;
+
+      document.getElementById("import-textarea").value = sample;
+    }
+
+    function parseAndApplyReflog() {
+      const text = document.getElementById("import-textarea").value.trim();
+      if (!text) {
+        alert("Please paste your git reflog text first.");
+        return;
+      }
+
+      const lines = text.split("\n");
+      const parsed = [];
+
+      // Regex matches git reflog formats:
+      // e.g. b81a29f (HEAD -> main) HEAD@{0}: reset: moving to HEAD~2
+      // e.g. 3a4f891 HEAD@{1}: commit: fix message
+      const regex = /([0-9a-f]{7,40})\s+(?:\([^)]+\)\s+)?HEAD@\{([^}]+)\}:\s*([^:]+)?(?::\s*(.*))?/i;
+
+      lines.forEach((line, idx) => {
+        const match = line.match(regex);
+        if (match) {
+          const hash = match[1];
+          const refNum = match[2];
+          const actionWord = match[3] ? match[3].trim() : "commit";
+          const details = match[4] ? match[4].trim() : line;
+
+          let actionType = "commit";
+          let typeBadge = "commit";
+          const lower = (actionWord + " " + details).toLowerCase();
+
+          if (lower.includes("reset") || lower.includes("force")) {
+            actionType = "danger";
+            typeBadge = lower.includes("reset") ? "reset --hard" : "force push";
+          } else if (lower.includes("branch") || lower.includes("checkout") || lower.includes("stash")) {
+            actionType = "branch";
+            typeBadge = lower.includes("branch") ? "branch op" : "checkout";
+          } else if (lower.includes("amend")) {
+            typeBadge = "amend";
+          } else if (lower.includes("merge")) {
+            typeBadge = "merge";
+          }
+
+          parsed.push({
+            id: idx,
+            hash: hash,
+            ref: `HEAD@{${refNum}}`,
+            action: `${actionWord}: ${details}`,
+            actionType: actionType,
+            typeBadge: typeBadge,
+            branch: "main",
+            timeAgo: `${idx + 1} commit${idx === 0 ? '' : 's'} ago`,
+            author: "Local Git User",
+            fullMsg: `${actionWord}: ${details}`,
+            files: [
+              {
+                name: "src/restored-source.ts",
+                additions: Math.floor(Math.random() * 30) + 5,
+                deletions: Math.floor(Math.random() * 15) + 1,
+                diff: [
+                  { type: "hunk", text: `@@ -1,5 +1,8 @@ Snapshot ${hash}` },
+                  { type: "context", text: ` // Imported from your terminal git reflog` },
+                  { type: "del", text: ` - // Deprecated state before ${hash}` },
+                  { type: "add", text: ` + // Restored state matching ${hash}` },
+                  { type: "context", text: ` // Commit: ${details}` }
+                ]
+              }
+            ]
+          });
+        }
+      });
+
+      if (parsed.length === 0) {
+        alert("Could not parse reflog entries. Please verify the format matches 'hash HEAD@{n}: message'.");
+        return;
+      }
+
+      reflogEntries = parsed;
+      selectedIndex = 0;
+      closeImportModal();
+      renderReflogList();
+      renderDiffPanel();
+      renderRightDeck();
+      showToast("Reflog Imported!", `Successfully loaded ${parsed.length} entries from terminal`);
+    }
+
+    function resetMockData() {
+      reflogEntries = [...DEFAULT_REFLOG];
+      selectedIndex = 1;
+      selectedStrategy = "hard";
+      renderReflogList();
+      renderDiffPanel();
+      renderRightDeck();
+      showToast("Demo Reset", "Restored 10 realistic disaster reflog entries.");
+    }
+
+    // Help modal
+    function openHelpModal() {
+      document.getElementById("help-modal").classList.remove("hidden");
+    }
+    function closeHelpModal() {
+      document.getElementById("help-modal").classList.add("hidden");
+    }
+
+    function closeAppModal() {
+      showToast("Tauri Window", "In desktop Tauri build, this minimizes to system tray.");
+    }
+    function minimizeApp() {
+      showToast("Window Minimized", "Desktop window tucked into taskbar.");
+    }
+    function toggleMaximize() {
+      showToast("Maximized", "Toggled borderless desktop mode.");
+    }
+
+    // 15-SECOND DEMO TOUR (Auto GIF Choreography)
+    async function start15SecDemoTour() {
+      if (isTourRunning) return;
+      isTourRunning = true;
+
+      const pointer = document.getElementById("demo-pointer");
+      pointer.style.opacity = "1";
+
+      function movePointerTo(element, offsetX = 0, offsetY = 0) {
+        if (!element) return;
+        const rect = element.getBoundingClientRect();
+        pointer.style.left = `${rect.left + rect.width / 2 + offsetX}px`;
+        pointer.style.top = `${rect.top + rect.height / 2 + offsetY}px`;
+      }
+
+      showToast("🎬 15s Tour Started", "Demonstrating automated safe undo flow...");
+
+      // Step 1 (0-3s): Point to Disaster Entry in Left Timeline
+      await sleep(600);
+      selectEntry(0);
+      const firstEntry = document.querySelector("#reflog-list > div:first-child");
+      movePointerTo(firstEntry);
+
+      // Step 2 (3-6s): Point to Pre-Disaster Snapshot a43c821
+      await sleep(2000);
+      selectEntry(1);
+      const secondEntry = document.querySelectorAll("#reflog-list > div")[1];
+      movePointerTo(secondEntry);
+
+      // Step 3 (6-8s): Move pointer to Diff Highlights in Center
+      await sleep(2200);
+      const diffLine = document.querySelector(".diff-line.add");
+      movePointerTo(diffLine);
+
+      // Step 4 (8-10s): Move pointer to Big Safe Undo Button
+      await sleep(2000);
+      const undoBtn = document.getElementById("btn-big-undo");
+      movePointerTo(undoBtn);
+      undoBtn.classList.add("pulse-undo");
+
+      // Step 5 (10s): Open Confirmation Modal
+      await sleep(1500);
+      openConfirmModal();
+      const input = document.getElementById("confirm-input");
+      movePointerTo(input);
+
+      // Step 6 (11-13s): Auto-type "UNDO" letter by letter
+      await sleep(1000);
+      const letters = ["U", "N", "D", "O"];
+      input.value = "";
+      for (let char of letters) {
+        input.value += char;
+        handleConfirmInput(input.value);
+        playChime('click');
+        await sleep(350);
+      }
+
+      // Step 7 (13-15s): Click confirm button
+      await sleep(800);
+      const confirmBtn = document.getElementById("btn-confirm-undo");
+      movePointerTo(confirmBtn);
+      await sleep(500);
+      executeVisualUndo();
+
+      // End tour
+      await sleep(1200);
+      pointer.style.opacity = "0";
+      isTourRunning = false;
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // Keyboard Shortcuts Listener
+    window.addEventListener("keydown", (e) => {
+      // Don't intercept if user is typing in input or textarea
+      if (["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+        if (e.key === "Escape") {
+          closeConfirmModal();
+          closeImportModal();
+          closeHelpModal();
+          document.activeElement.blur();
+        }
+        return;
+      }
+
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        selectEntry(Math.min(reflogEntries.length - 1, selectedIndex + 1));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        selectEntry(Math.max(0, selectedIndex - 1));
+      } else if (e.key === "u" || (e.key === "z" && (e.metaKey || e.ctrlKey))) {
+        e.preventDefault();
+        openConfirmModal();
+      } else if (e.key === "c") {
+        copyCommand();
+      } else if (e.key === "d") {
+        downloadPatchFile();
+      } else if (e.key === "t") {
+        start15SecDemoTour();
+      } else if (e.key === "?") {
+        openHelpModal();
+      } else if (e.key === "Escape") {
+        closeConfirmModal();
+        closeImportModal();
+        closeHelpModal();
+      }
+    });
+
+    // Initial Boot
+    window.addEventListener("DOMContentLoaded", () => {
+      renderReflogList();
+      renderDiffPanel();
+      renderRightDeck();
+    });
+  </script>
+</body>
+</html>
