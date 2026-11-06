@@ -180,16 +180,23 @@ CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 
 ## 🖥️ Desktop executor (optional)
 
-> **Status, honestly stated.** The guard crate is compiled and tested by CI on every push:
-> **clippy clean, 19/19 unit tests passing**. The Tauri shell is compiled the same way and the
-> binary is built and weighed (`cargo clippy -D warnings` + `cargo build --release`, failing
-> above 20 MiB). There is still one gap: **nobody has clicked the app yet.** No window has been
-> opened against a real repository, because every environment this was written in lacks both a
-> Rust toolchain and a desktop session. Treat the first desktop release as a beta.
+> **Status, honestly stated.** Everything below is verified by CI on every push, not asserted:
 >
-> The JavaScript half of the contract is tested too (`tests/executor.test.mjs`): the UI calls
-> exactly the four registered commands, with matching argument names, the `restore`→`files`
-> strategy mapping, and the `RESET` gate.
+> | Check | Result |
+> | :--- | :--- |
+> | Guard crate: compile + clippy `-D warnings` + unit tests | **19/19 passing** |
+> | Shell: clippy `-D warnings`, release build | **clean, 4 MiB binary** |
+> | Reset driven against real throwaway repositories | **10/10 end-to-end scenarios** |
+> | UI ↔ IPC contract (names, args, strategy strings, `RESET` gate) | **`tests/executor.test.mjs`** |
+>
+> The end-to-end tests build actual repositories with `git` and assert that a refusal leaves the
+> working tree untouched, that `backup-before-recovery` exists before the reset it protects, and
+> that a second reset cannot overwrite the first backup.
+>
+> There is still exactly one gap: **nobody has opened the window.** No human has clicked through
+> the webview against a repository, because every environment this was written in has no desktop
+> session. The destructive path is exercised; the *widgets* are not. Treat the first desktop
+> release as a beta.
 
 The web build stays exactly what it was: one static file, **0 runtime dependencies, 0 network
 calls**, no repository access. The desktop build wraps *the same* file and adds the one thing a
@@ -251,10 +258,11 @@ cd src-tauri/logic
 cargo test --no-default-features     # 19 tests, zero dependencies
 ```
 
-CI (`.github/workflows/compile-check.yml`) runs the guard tests, clippy with `-D warnings`, and
-a release build of the shell on Linux, failing if the binary exceeds 20 MiB. Failures are
-re-emitted as check annotations on the offending line, so a compile error is readable without
-downloading job logs.
+CI (`.github/workflows/compile-check.yml`) compiles both crates with `-D warnings`, runs the
+guard unit tests and the end-to-end repository tests, and builds + weighs the release binary,
+failing above 20 MiB. Failures are re-emitted as check annotations on the offending line, so a
+compile error is readable without downloading job logs. `cargo fmt --check` is advisory only:
+formatting is not a correctness signal, and this code was authored where rustfmt cannot run.
 
 The icon is committed (`src-tauri/icons/`, generated from a hand-drawn undo glyph — no
 third-party art). macOS and Windows **installers** additionally need those hosts; cross-compiling
@@ -267,7 +275,7 @@ a Tauri bundle is not supported.
 | `index.html` (web build) | 200 KB / **49 KB gzip** | measured |
 | Runtime dependencies | **0** | measured |
 | Network calls at runtime | **0** | measured |
-| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **see CI** | measured on every push; hard budget 20 MB |
+| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **4 MiB** | measured by CI on every push; hard budget 20 MiB |
 | Electron equivalent | ~150 MB | reference point, and it bundles Chromium |
 
 The desktop build ships no browser engine: it uses the OS webview already on your machine.
@@ -368,10 +376,11 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 - [x] Test suite + CI.
 - [x] Tauri v2 desktop shell with a four-command, guard-checked bridge (folder picker → read
       reflog → optional real reset).
-- [x] First real compile: CI builds the shell and tests the guard crate on every push.
-- [ ] **First real run.** Open the desktop window against a throwaway repository and confirm the
-      four commands behave end to end. Everything below that has been verified by machine; this
-      last step needs a human with a desktop.
+- [x] First real compile: CI builds the shell, runs the guard crate's 19 tests, and drives the
+      reset against throwaway repositories (10 scenarios).
+- [x] Release binary measured: **4 MiB**, enforced by a 20 MiB CI budget.
+- [ ] **First real click-through.** Open the desktop window against a throwaway repository and
+      use the widgets. Machine-verified below that line; this last step needs a desktop.
 - [ ] Signed/notarised installers (needs macOS + Windows hosts and certificates).
 - [ ] Undo across more than the current branch's reflog (branch/reflog selection).
 - [x] Multi-entry selection ("undo everything since HEAD@{4}").

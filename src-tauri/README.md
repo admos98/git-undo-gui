@@ -4,13 +4,15 @@ This directory holds an **optional** native wrapper around the same `index.html`
 to the browser. The browser build is the primary artifact and is unchanged by anything here:
 0 runtime dependencies, 0 network calls, no repository access.
 
-## Status: compiled and tested by CI, never yet run by a human
+## Status: compiled, tested against real repositories, never yet clicked
 
-`cargo clippy --all-targets -- -D warnings` and `cargo build --release` run on every push
-(`.github/workflows/compile-check.yml`), and the guard crate's 19 unit tests run with clippy
-`-D warnings` on top. What has **not** happened: opening the window against a real repository.
-The environment this was authored in has neither a Rust toolchain nor a desktop session, so the
-first click-through is still owed. Treat it as a beta.
+On every push CI runs `cargo clippy --all-targets -- -D warnings`, builds the release binary
+(4 MiB, enforced under a 20 MiB budget), runs the guard crate's 19 unit tests, and runs
+`src/e2e.rs` — which creates throwaway repositories with real `git` and checks that a refusal
+leaves the tree untouched and that the backup branch exists before the reset it protects.
+
+What has **not** happened: a human opening the window. There was no desktop session anywhere this
+was authored, so the webview and the widget flow are unverified. Treat it as a beta.
 
 The JavaScript side of the contract is tested too (`tests/executor.test.mjs`): command names,
 argument names, strategy strings (`restore` → `files`), the `RESET` acknowledgement, and the
