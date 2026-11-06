@@ -51,11 +51,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_bridge_lands_before_the_app_script() {
+    fn the_bridge_lands_before_the_app_code() {
         let page = page();
         let bridge = page.find("__TAURI_INTERNALS__").expect("bridge injected");
-        let app = page.find("<script>").expect("app script present");
-        assert!(bridge < app, "bridge must run before the app's own script");
+        // Anchor on the app's own code, not on "<script>" — the bridge is itself
+        // a script tag, which makes the naive search tautological.
+        let app = page.find("function isDesktop").expect("app code present");
+        assert!(bridge < app, "bridge must be defined before the app runs");
+        assert_eq!(page.matches("__TAURI_INTERNALS__").count(), 1, "injected once");
     }
 
     #[test]
