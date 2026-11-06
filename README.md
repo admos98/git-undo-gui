@@ -144,7 +144,7 @@ The suite loads the shipped `index.html` into jsdom — it tests the artifact, n
 
 ```bash
 npm install
-npm test              # 93 checks, ~17s
+npm test              # 96 checks, ~17s
 npm test -- parsers   # filter by suite file
 ```
 
@@ -180,12 +180,16 @@ CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 
 ## 🖥️ Desktop executor (optional)
 
-> **Honesty note, first.** This Rust code has **not been compiled**. It was written in an
-> environment with no Rust toolchain and no package-registry access, so `cargo build` has never
-> run against it, and I will not claim it compiles. What *is* verified is the JavaScript side of
-> the contract: a test suite stubs the bridge and checks that the UI calls exactly the four
-> commands the Rust registers, with matching argument names, strategy strings, and confirm
-> phrase. The rest needs one real `cargo build` on a machine with Rust — see below.
+> **Status, honestly stated.** The guard crate is compiled and tested by CI on every push:
+> **clippy clean, 19/19 unit tests passing**. The Tauri shell is compiled the same way and the
+> binary is built and weighed (`cargo clippy -D warnings` + `cargo build --release`, failing
+> above 20 MiB). There is still one gap: **nobody has clicked the app yet.** No window has been
+> opened against a real repository, because every environment this was written in lacks both a
+> Rust toolchain and a desktop session. Treat the first desktop release as a beta.
+>
+> The JavaScript half of the contract is tested too (`tests/executor.test.mjs`): the UI calls
+> exactly the four registered commands, with matching argument names, the `restore`→`files`
+> strategy mapping, and the `RESET` gate.
 
 The web build stays exactly what it was: one static file, **0 runtime dependencies, 0 network
 calls**, no repository access. The desktop build wraps *the same* file and adds the one thing a
@@ -231,15 +235,30 @@ Each call spawns one short-lived `git` process with `GIT_TERMINAL_PROMPT=0` and
 
 ```bash
 npm install
-npm run build                      # dist/index.html
-cargo test --no-default-features --offline   # guard rules, in src-tauri/logic
-npm run tauri:build                # needs Rust + your platform's webview libs
+npm run tauri:build        # builds the UI, syncs the embedded copy, then bundles
 ```
 
-CI runs the guard tests and a `cargo check` of the shell on Linux (see the `logic` and `shell`
-jobs in `.github/workflows/ci.yml`). Icons are not committed; generate them with
-`npx @tauri-apps/cli@^2 icon <png>` before bundling. macOS/Windows bundles additionally need
-those hosts (cross-compiling a Tauri bundle is not supported).
+Under the hood that is `npm run build` → `npm run embed:web` → `tauri build`. The middle step
+matters: a Tauri webview can only load an `http(s)` URL, so the shell **serves the page from
+inside the binary** through a custom protocol — no server, no port. `scripts/embed-web.mjs`
+keeps the compiled-in copy identical to `dist/index.html` (the build has no way to read
+`dist/` at compile time on a clean checkout), and a test fails if the two ever drift.
+
+To work on the guard rules alone, no Tauri needed:
+
+```bash
+cd src-tauri/logic
+cargo test --no-default-features     # 19 tests, zero dependencies
+```
+
+CI (`.github/workflows/compile-check.yml`) runs the guard tests, clippy with `-D warnings`, and
+a release build of the shell on Linux, failing if the binary exceeds 20 MiB. Failures are
+re-emitted as check annotations on the offending line, so a compile error is readable without
+downloading job logs.
+
+The icon is committed (`src-tauri/icons/`, generated from a hand-drawn undo glyph — no
+third-party art). macOS and Windows **installers** additionally need those hosts; cross-compiling
+a Tauri bundle is not supported.
 
 ### Weight, measured and estimated
 
@@ -248,7 +267,7 @@ those hosts (cross-compiling a Tauri bundle is not supported).
 | `index.html` (web build) | 200 KB / **49 KB gzip** | measured |
 | Runtime dependencies | **0** | measured |
 | Network calls at runtime | **0** | measured |
-| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **~5–8 MB** | estimate — not built |
+| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **see CI** | measured on every push; hard budget 20 MB |
 | Electron equivalent | ~150 MB | reference point, and it bundles Chromium |
 
 The desktop build ships no browser engine: it uses the OS webview already on your machine.
@@ -349,8 +368,10 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 - [x] Test suite + CI.
 - [x] Tauri v2 desktop shell with a four-command, guard-checked bridge (folder picker → read
       reflog → optional real reset).
-- [ ] **First real `cargo build`.** The Rust is written but uncompiled here; a machine with a
-      Rust toolchain and the platform webview libraries needs to do the first build.
+- [x] First real compile: CI builds the shell and tests the guard crate on every push.
+- [ ] **First real run.** Open the desktop window against a throwaway repository and confirm the
+      four commands behave end to end. Everything below that has been verified by machine; this
+      last step needs a human with a desktop.
 - [ ] Signed/notarised installers (needs macOS + Windows hosts and certificates).
 - [ ] Undo across more than the current branch's reflog (branch/reflog selection).
 - [x] Multi-entry selection ("undo everything since HEAD@{4}").
