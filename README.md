@@ -16,12 +16,18 @@ push helper, the incident report — exists to make that one decision safe.
 
 ### 📌 Demo Status — please read
 
-**It plans a reset; it does not execute one.** This is a reset planner and a safe command generator. It does **not** run git, does not open a repository, and does not shell out to anything. It parses the reflog / `git log -p` / `git show` text that *you* paste in, shows you what each entry means with real per-file diffs, and writes the exact command you'd need. You stay in control of your terminal.
+**The browser build plans a reset; it does not execute one.** This is a reset planner and a safe command generator. In the browser it does **not** run git, does not open a repository, and does not shell out to anything. It parses the reflog / `git log -p` / `git show` text that *you* paste in, shows you what each entry means with real per-file diffs, and writes the exact command you'd need. You stay in control of your terminal.
+
+There is one deliberate exception: an **optional desktop build** (Tauri, ~5–8 MB) can run the
+reset for you through a four-command, guard-checked bridge. It is opt-in, it never touches the
+web build, and it takes a `backup-before-recovery` branch first. Everything below describes the
+static build unless it says "desktop".
 
 - Sample data is 6 hand-written entries, clearly labelled **DEMO MODE** in the titlebar.
 - Data you import is labelled **REFLOG** or **GIT LOG** and stays in your browser's `localStorage` only.
-- The undo button always says **UNDO TO THIS SNAPSHOT** and always ends in "copies the reset command — run it in
-  your terminal". In demo mode the same flow runs against sample data and is labelled **simulated**.
+- The undo button always says **UNDO TO THIS SNAPSHOT**. In the browser it copies the reset command for
+  you to run; only the desktop build (with a repository open) runs it, after a backup and a typed
+  confirmation. In demo mode the same flow runs against sample data and is labelled **simulated**.
 
 ---
 
@@ -138,7 +144,7 @@ The suite loads the shipped `index.html` into jsdom — it tests the artifact, n
 
 ```bash
 npm install
-npm test              # 77 checks, ~14s
+npm test              # 93 checks, ~17s
 npm test -- parsers   # filter by suite file
 ```
 
@@ -149,6 +155,7 @@ npm test -- parsers   # filter by suite file
 | `tests/ui.test.mjs` | j/k/arrows, `u`, `?`, `/`, layered Esc, `Type UNDO`, confetti+chime, clipboard fallbacks, copy/patch exports, row semantics, focus trap, tour cancel/replay |
 | `tests/features.test.mjs` | action-aware commands, strategy cards + keys, recovery range, undo-push sequence, incident report, oversized paste, empty-state coherence |
 | `tests/integrity.test.mjs` | no CDN/network/`alert`, inlined CSS freshness, CSP present, package.json hygiene, XSS regression, size budget |
+| `tests/executor.test.mjs` | the web build executes nothing; the desktop UI calls only the four registered commands with matching argument names, strategy strings and confirm phrase; `RESET` gating; refusals surfaced; no bare `--force`; no server/thread/telemetry; dependency budget |
 
 CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 `src/tailwind.css` (`.github/workflows/ci.yml`).
@@ -160,9 +167,10 @@ CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 - **No network surface**: CSP `default-src 'none'` with `connect-src 'none'`, no remote
   script/style/img/font, and no `fetch`/XHR in the code. Your pasted reflog never leaves
   the tab.
-- **No shell**: the app cannot read a repository or run git. It parses text and emits a reset
-  command for *you* to review. A static file has no access to your repo, and a browser tab should never be able to run
-  `reset --hard`.
+- **No shell (web build)**: the browser build cannot read a repository or run git. It parses text
+  and emits a reset command for *you* to review. A static file has no access to your repo, and a
+  browser tab should never be able to run `reset --hard`. The desktop build can — see
+  [the executor](#-desktop-executor-optional) for exactly what stops a mistake, and what does not.
 - **No injection**: every user-derived string is escaped before it reaches `innerHTML`;
   a regression test pastes `<img onerror>` / `<script>` payloads and asserts nothing executes.
 - **Persisted locally**: `localStorage` only, capped at 200k chars, and the app tells you
@@ -170,24 +178,81 @@ CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 
 ---
 
-## 🖥️ Desktop (Tauri v2, optional)
+## 🖥️ Desktop executor (optional)
 
-`src-tauri/` contains a thin native shell that hosts the same built `dist/index.html`.
-It exposes **no IPC commands** — the desktop build has the same read-only, no-git
-guarantees as the web build.
+> **Honesty note, first.** This Rust code has **not been compiled**. It was written in an
+> environment with no Rust toolchain and no package-registry access, so `cargo build` has never
+> run against it, and I will not claim it compiles. What *is* verified is the JavaScript side of
+> the contract: a test suite stubs the bridge and checks that the UI calls exactly the four
+> commands the Rust registers, with matching argument names, strategy strings, and confirm
+> phrase. The rest needs one real `cargo build` on a machine with Rust — see below.
+
+The web build stays exactly what it was: one static file, **0 runtime dependencies, 0 network
+calls**, no repository access. The desktop build wraps *the same* file and adds the one thing a
+static page cannot do — run the command it just planned.
+
+### The bridge is four commands, and that is the whole surface
+
+| Command | Signature | Touches your repo |
+|---|---|---|
+| `git_read_reflog` | `(path, limit?) -> String` | read only |
+| `git_repo_state` | `(path) -> RepoState` | read only |
+| `git_create_backup` | `(path) -> OpReport` | creates one branch, moves nothing |
+| `git_reset` | `(path, target, strategy, confirm?) -> ResetOutcome` | the only mutating call |
+
+No daemon, no local HTTP server, no background thread, no telemetry, no `reqwest`/`tokio`.
+Each call spawns one short-lived `git` process with `GIT_TERMINAL_PROMPT=0` and
+`GIT_OPTIONAL_LOCKS=0`, capped at 8 MB of output.
+
+### What stops a mistake (in the order the guard runs)
+
+1. **An operation is half-finished?** merge / rebase / cherry-pick / revert / bisect → refused.
+2. **Hard reset that changes nothing?** → refused instead of pretending to work.
+3. **Hard reset without acknowledgement?** the UI makes you type `RESET` (not `UNDO`) and the
+   Rust side re-checks the same phrase — the frontend cannot skip this.
+4. **Hard reset over uncommitted tracked files?** → refused. Commit or stash first. Untracked
+   files do not block (they survive a reset), and they are listed so you can see that.
+5. **Then** a `backup-before-recovery` branch is created at the pre-reset HEAD, and every
+   success response carries an `undo` line that walks you back to it.
+
+`--force` appears nowhere in the project. Push recovery uses `--force-with-lease`.
+
+### What it does **not** protect you from
+
+- **Unpushed commits.** The backup branch keeps them alive, but a `reset --hard` genuinely
+  moves them off the branch. The UI shows the count before you confirm; read it.
+- **A backup branch from an earlier session.** The name is fixed and idempotent, so a second
+  reset does not silently overwrite the first backup — the UI says the backup predates this
+  reset and to check `git log backup-before-recovery`. It is a safety net, not a time machine.
+- **A bug in uncompiled code.** Treat the first desktop release as a beta: run it in a scratch
+  clone once and watch what it does before pointing it at work you care about.
+
+### Building it
 
 ```bash
 npm install
-npm run build
-npx @tauri-apps/cli@^2 dev     # needs Rust + platform toolchain
-npm run tauri:build            # bundles via src-tauri/tauri.conf.json
+npm run build                      # dist/index.html
+cargo test --no-default-features --offline   # guard rules, in src-tauri/logic
+npm run tauri:build                # needs Rust + your platform's webview libs
 ```
 
-The shell is scaffolded and configured but **not part of CI by default** (release
-workflow gates it behind `vars.TAURI_ENABLED`). Icons are generated with
-`npx @tauri-apps/cli@^2 icon <png>`; see `src-tauri/README.md`.
+CI runs the guard tests and a `cargo check` of the shell on Linux (see the `logic` and `shell`
+jobs in `.github/workflows/ci.yml`). Icons are not committed; generate them with
+`npx @tauri-apps/cli@^2 icon <png>` before bundling. macOS/Windows bundles additionally need
+those hosts (cross-compiling a Tauri bundle is not supported).
 
----
+### Weight, measured and estimated
+
+| Artifact | Size | Verified |
+|---|---|---|
+| `index.html` (web build) | 200 KB / **49 KB gzip** | measured |
+| Runtime dependencies | **0** | measured |
+| Network calls at runtime | **0** | measured |
+| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **~5–8 MB** | estimate — not built |
+| Electron equivalent | ~150 MB | reference point, and it bundles Chromium |
+
+The desktop build ships no browser engine: it uses the OS webview already on your machine.
+That is the entire reason it is a few megabytes rather than a few hundred.
 
 ## 🚀 Quickstart
 
@@ -249,7 +314,7 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 ## 🎯 Technical Specifications
 
 - **Architecture**: one `index.html` with inlined CSS + vanilla JS. No framework, no bundler at runtime.
-- **Size**: ≈180 KB total — ≈30 KB of that is Tailwind CSS compiled ahead of time and inlined.
+- **Size**: ≈200 KB total (49 KB gzip) — ≈40 KB of that is Tailwind CSS compiled ahead of time and inlined.
 - **Network**: **none**. No `<script src>`, no `@import`, no fonts, no analytics. Works fully offline from `file://`.
 - **Runtime dependencies**: zero.
 - **Theme**: Tokyo Night (`#1a1b26`, `#16161e`, `#7dcfff`, `#bb9af7`, `#9ece6a`, `#f7768e`) via `--tn-*` variables.
@@ -257,7 +322,9 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
   only the first 200 KB is persisted for reloads.
 - **Storage**: `localStorage` keys `git-undo-seen`, `git-undo-tour-seen`, `git-undo-imported-reflog`, `git-undo-import-mode` (capped at 200k chars, clearable with the reset button).
 - **Accessibility**: text selectable by default (only app chrome opts out), one `h1`, `role="listbox"/"option"` timeline that is keyboard reachable (Tab + Enter), `role="dialog"` + `aria-modal` + `aria-describedby` + focus trap, `aria-live` toasts and counts, `aria-label` on every icon-only button, visible focus rings, `prefers-reduced-motion` respected.
-- **Git safety**: read-only visualisation and command generation. It never invokes a subprocess.
+- **Git safety**: the web build is read-only visualisation and command generation — it never
+  invokes a subprocess. The optional desktop build runs git through four guarded commands; see
+  [Desktop executor](#-desktop-executor-optional).
 
 ---
 
@@ -280,9 +347,12 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 
 - [x] Real diffs from `git show` / `git log -p` paste (no backend needed).
 - [x] Test suite + CI.
-- [x] Tauri v2 shell scaffolded (shell only, no IPC).
-- [ ] Read `.git/logs/HEAD` directly — needs a local helper or file picker API, and a
-      security review, because it turns "text in" into "filesystem access".
+- [x] Tauri v2 desktop shell with a four-command, guard-checked bridge (folder picker → read
+      reflog → optional real reset).
+- [ ] **First real `cargo build`.** The Rust is written but uncompiled here; a machine with a
+      Rust toolchain and the platform webview libraries needs to do the first build.
+- [ ] Signed/notarised installers (needs macOS + Windows hosts and certificates).
+- [ ] Undo across more than the current branch's reflog (branch/reflog selection).
 - [x] Multi-entry selection ("undo everything since HEAD@{4}").
 - [x] Copy-as-markdown incident report for PRs / team standups.
 - [x] Action-aware command generation (stash / checkout / branch entries).

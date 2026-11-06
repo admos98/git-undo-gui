@@ -7,8 +7,10 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "git-undo-gui",
         "width": 1440,
         "height": 900,
@@ -30,6 +32,6 @@
     "icon": ["icons/icon.png"],
     "category": "DeveloperTool",
     "shortDescription": "Visual git undo from your reflog",
-    "longDescription": "Reads a reflog or git log you paste in, shows real diffs, and generates the safe undo command. Never executes git for you."
+    "longDescription": "Reads your reflog, previews the undo, and generates the command. The optional desktop build can also run the reset itself, guarded and after taking a backup branch."
   }
 }
