@@ -143,7 +143,7 @@ fn soft_reset_moves_head_and_keeps_the_work() {
         "second\n",
         "a soft reset must not touch the working tree"
     );
-    assert!(outcome.undo.is_some(), "every mutating reset reports a way back");
+    assert!(outcome.report.undo.is_some(), "every mutating reset reports a way back");
     assert!(
         scratch.has_branch("backup-before-recovery"),
         "the backup branch is taken before the reset"
@@ -215,7 +215,7 @@ fn hard_reset_moves_everything_and_the_backup_points_at_the_old_head() {
     let backup = scratch.git(&["rev-parse", "backup-before-recovery"]);
     assert_eq!(backup, second, "backup-before-recovery must be the pre-reset HEAD");
     assert_eq!(outcome.backup_branch.as_deref(), Some("backup-before-recovery"));
-    let undo = outcome.undo.expect("an undo command");
+    let undo = outcome.report.undo.clone().expect("an undo command");
     assert!(undo.contains("backup-before-recovery"), "{undo}");
 }
 
@@ -256,7 +256,7 @@ fn resets_are_refused_mid_merge() {
     let (first, _second) = two_commits(&scratch);
 
     // A real conflicting merge leaves .git/MERGE_HEAD behind.
-    scratch.git(&["checkout", "--quiet", "-b", "side", first]);
+    scratch.git(&["checkout", "--quiet", "-b", "side", &first]);
     scratch.write("notes.md", "side\n");
     scratch.commit("side");
     scratch.git(&["checkout", "--quiet", "main"]);
