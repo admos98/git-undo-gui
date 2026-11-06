@@ -9,11 +9,13 @@
 //! If `git` is missing, commands fail with `git_unavailable` and the UI falls back
 //! to the copy-a-command experience.
 
+#[cfg(test)]
+mod e2e;
 mod embed;
 mod git;
 mod service;
 
-use git_undo_logic::error::GitError;
+pub use git_undo_logic::error::GitError;
 use git_undo_logic::state::RepoState;
 use service::{OpReport, ResetOutcome};
 use std::path::PathBuf;

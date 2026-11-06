@@ -114,6 +114,15 @@ jobs:
           set -o pipefail
           cargo clippy --all-targets -- -D warnings 2>&1 | tee /tmp/shell.log
 
+      # Real repositories, real git. This is the closest CI can get to clicking
+      # the app: refusals must leave the repo untouched, and the backup branch
+      # must exist before the reset it protects.
+      - name: End-to-end against throwaway repositories
+        working-directory: src-tauri
+        run: |
+          set -o pipefail
+          cargo test --bins -- --test-threads=1 2>&1 | tee -a /tmp/shell.log
+
       - name: Build the binary and check its weight
         working-directory: src-tauri
         run: |
