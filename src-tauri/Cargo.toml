@@ -1,0 +1,38 @@
+[package]
+name = "git-undo-gui"
+version = "1.0.0"
+description = "Visual git undo — plan a reset from your reflog, with backup-before-recovery"
+authors = ["git-undo-gui contributors"]
+license = "MIT"
+repository = "https://github.com/admos98/git-undo-gui"
+edition = "2021"
+rust-version = "1.77"
+
+# Tauri's template convention: an explicit lib target that both the binary and
+# the mobile entry points can link. main.rs calls `git_undo_gui_lib::run()`.
+[lib]
+name = "git_undo_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Small binary: no async runtime, no HTTP client, no extra crates.
+[dependencies]
+git-undo-logic = { path = "logic" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Native folder picker only. No HTTP, no shell, no filesystem plugin.
+tauri-plugin-dialog = "2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

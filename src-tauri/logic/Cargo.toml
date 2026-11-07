@@ -1,0 +1,15 @@
+[package]
+name = "git-undo-logic"
+version = "1.0.0"
+description = "Safety rules for git-undo-gui: pure, dependency-free, unit-tested"
+license = "MIT"
+edition = "2021"
+rust-version = "1.77"
+
+# Optional so `cargo test --no-default-features` builds with ZERO external crates:
+# the guard policy can then be reviewed and tested on any machine, offline.
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+default = ["serde"]
