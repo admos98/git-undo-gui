@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
-[![Bundle size](https://img.shields.io/badge/index.html-180%20KB%20(30%20KB%20CSS%20inlined)-7dcfff)](index.html)
+[![Bundle size](https://img.shields.io/badge/index.html-196%20KB%20raw%20%C2%B7%2048%20KB%20gzip-7dcfff)](index.html)
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
@@ -341,7 +341,9 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 ## 🎯 Technical Specifications
 
 - **Architecture**: one `index.html` with inlined CSS + vanilla JS. No framework, no bundler at runtime.
-- **Size**: ≈200 KB total (49 KB gzip) — ≈40 KB of that is Tailwind CSS compiled ahead of time and inlined.
+- **Size**: 196 KB raw / 48 KB gzip — about 30 KB of that is Tailwind CSS compiled ahead of time and
+  inlined. (The badge above is checked against the file by `tests/integrity.test.mjs`, so it cannot
+  drift from the artifact again.)
 - **Network**: **none**. No `<script src>`, no `@import`, no fonts, no analytics. Works fully offline from `file://`.
 - **Runtime dependencies**: zero.
 - **Theme**: Tokyo Night (`#1a1b26`, `#16161e`, `#7dcfff`, `#bb9af7`, `#9ece6a`, `#f7768e`) via `--tn-*` variables.

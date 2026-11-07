@@ -5,6 +5,7 @@
  */
 import { readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import zlib from "node:zlib";
 import { resolve } from "node:path";
 import { ROOT, INDEX_PATH, HTML, boot, createSuite } from "./harness.mjs";
 
@@ -91,6 +92,34 @@ suite.test("no user data is ever uploaded or echoed into a script sink", async (
 suite.test("artifact stays under the promised size budget", () => {
   const kb = statSync(INDEX_PATH).size / 1024;
   return kb < 200 || `index.html is ${kb.toFixed(0)} KB`;
+});
+
+// The v1 bug this repo keeps re-learning: a number in a badge that nobody
+// re-measures. These derive the figures from the artifact itself, so the README
+// cannot advertise a size the file does not have.
+suite.test("the README badge reports the real size", () => {
+  const kib = Math.round(statSync(INDEX_PATH).size / 1024);
+  const gzipKib = Math.round(zlib.gzipSync(readFileSync(INDEX_PATH), { level: 9 }).length / 1024);
+  const readme = readFileSync(resolve(ROOT, "README.md"), "utf8");
+
+  const badge = readme.match(/badge\/index\.html-([0-9]+)%20KB%20raw%20%C2%B7%20([0-9]+)%20KB%20gzip/);
+  if (!badge) return "no size badge found in README (expected index.html-<raw>%20KB%20raw%20%C2%B7%20<gzip>%20KB%20gzip)";
+
+  const bad = [];
+  if (Number(badge[1]) !== kib) bad.push(`badge says ${badge[1]} KB raw, file is ${kib} KiB`);
+  if (Number(badge[2]) !== gzipKib) bad.push(`badge says ${badge[2]} KB gzip, file is ${gzipKib} KiB`);
+  return bad.length === 0 || bad.join("; ");
+});
+
+suite.test("the README does not claim a size the file contradicts", () => {
+  const kib = Math.round(statSync(INDEX_PATH).size / 1024);
+  const readme = readFileSync(resolve(ROOT, "README.md"), "utf8");
+  // Every "<n> KB" figure presented as the total must match, allowing ±2 KiB.
+  const claims = [...readme.matchAll(/(?:≈|about\s)?\**(\d{3})\s*KB\**\s*(?:total|raw)/gi)].map((m) => Number(m[1]));
+  const wrong = claims.filter((n) => Math.abs(n - kib) > 2);
+  if (wrong.length) return `README claims ${wrong.join(", ")} KB total; file is ${kib} KiB`;
+  if (!claims.length) return "no explicit total-size claim found (keep one so it can be checked)";
+  return true;
 });
 
 export default await suite.run();

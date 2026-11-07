@@ -13,7 +13,7 @@
  *   3. The safety rules line up: `RESET` acknowledges a hard reset, the backup
  *      branch is agreed on both sides, and `--force` never appears.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { boot, createSuite, ROOT, wait } from "./harness.mjs";
 
@@ -286,6 +286,24 @@ suite.test("a successful reset reports the way back", async () => {
   // And the timeline is re-read from disk rather than faked.
   const reads = h.calls.filter((c) => c.cmd === "git_read_reflog").length;
   return reads >= 2 || `reflog read ${reads} time(s); expected a refresh after the reset`;
+});
+
+suite.test("the bundle ships no icons it cannot use", async () => {
+  const conf = JSON.parse(rust("tauri.conf.json"));
+  const icons = conf.bundle.icon.join(" ");
+  // A desktop bundle needs the Windows .ico, the macOS .icns and a PNG set.
+  for (const needed of ["32x32.png", "128x128.png", "icon.ico", "icon.icns"]) {
+    if (!icons.includes(needed)) return `bundle is missing ${needed}`;
+  }
+  // iOS/Android/Store artwork is dead weight for a desktop app and quietly
+  // reappears when someone re-runs `tauri icon`.
+  const dir = resolve(ROOT, "src-tauri", "icons");
+  const bloat = readdirSync(dir).filter((f) => /^(Square|StoreLogo|ios|android)/.test(f));
+  if (bloat.length) return `unused platform artwork: ${bloat.join(", ")}`;
+  if (!Array.isArray(conf.bundle.targets) || conf.bundle.targets.includes("all")) {
+    return "bundle.targets is 'all', which pulls Windows Store artwork back in";
+  }
+  return true;
 });
 
 // ------------------------------------------------------- desktop packaging
