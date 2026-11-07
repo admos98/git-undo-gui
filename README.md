@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
-[![Bundle size](https://img.shields.io/badge/index.html-180%20KB%20(30%20KB%20CSS%20inlined)-7dcfff)](index.html)
+[![Bundle size](https://img.shields.io/badge/index.html-200%20KB%20raw%20%C2%B7%2049%20KB%20gzip-7dcfff)](index.html)
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
@@ -144,7 +144,7 @@ The suite loads the shipped `index.html` into jsdom — it tests the artifact, n
 
 ```bash
 npm install
-npm test              # 96 checks, ~17s
+npm test              # 102 checks, ~19s
 npm test -- parsers   # filter by suite file
 ```
 
@@ -159,6 +159,19 @@ npm test -- parsers   # filter by suite file
 
 CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 `src/tailwind.css` (`.github/workflows/ci.yml`).
+
+### Sharing work as a patch
+
+`git diff` alone prints `Binary files differ` for the icons, and the resulting patch cannot be
+applied (`cannot apply binary patch … without full index line`). Use one of:
+
+```bash
+git diff --binary main..HEAD > changes.patch   # apply with: git apply changes.patch
+git format-patch --stdout main..HEAD           # format-patch includes binaries by default
+```
+
+`.gitattributes` marks `png/ico/icns` as binary so they are never line-ending-normalised, and a
+test fails if that file goes missing. Better still, push the branch — nobody needs a patch.
 
 ---
 
@@ -219,12 +232,28 @@ Each call spawns one short-lived `git` process with `GIT_TERMINAL_PROMPT=0` and
 
 1. **An operation is half-finished?** merge / rebase / cherry-pick / revert / bisect → refused.
 2. **Hard reset that changes nothing?** → refused instead of pretending to work.
-3. **Hard reset without acknowledgement?** the UI makes you type `RESET` (not `UNDO`) and the
-   Rust side re-checks the same phrase — the frontend cannot skip this.
+3. **Hard reset without acknowledgement?** the UI makes you type `RESET` and the Rust side
+   re-checks the same phrase — the frontend cannot skip this. Two phrases, one rule: `UNDO`
+   *copies* a command, `RESET` *destructively runs* one. The dialog shows which is required, why,
+   and every surface that names a phrase (label, placeholder, hint, tour) is derived from the same
+   function, so it cannot say `UNDO` in one place and `RESET` in another.
 4. **Hard reset over uncommitted tracked files?** → refused. Commit or stash first. Untracked
    files do not block (they survive a reset), and they are listed so you can see that.
 5. **Then** a `backup-before-recovery` branch is created at the pre-reset HEAD, and every
    success response carries an `undo` line that walks you back to it.
+
+**The stale-backup trap.** That branch is idempotent: it is created once and never moved, so after
+a second reset it may hold last month's HEAD while its name still promises "before *this*
+recovery". Following it would rewind you **past** the state you were recovering — a safety net
+that drops you further. So the executor reports the backup's commit and date, and:
+
+- a backup that points at the current HEAD is offered as the undo ("holds the state you just left");
+- an older one is **never** offered as a target. The undo points at the pre-reset commit itself,
+  and the stale branch is named as something to inspect, with its date.
+
+The confirm dialog warns about this *before* the reset (it reads the backup read-only, without
+creating anything), and the end-to-end tests assert that the undo which is offered actually
+restores the work when followed.
 
 `--force` appears nowhere in the project. Push recovery uses `--force-with-lease`.
 
@@ -265,8 +294,11 @@ compile error is readable without downloading job logs. `cargo fmt --check` is a
 formatting is not a correctness signal, and this code was authored where rustfmt cannot run.
 
 The icon is committed (`src-tauri/icons/`, generated from a hand-drawn undo glyph — no
-third-party art). macOS and Windows **installers** additionally need those hosts; cross-compiling
-a Tauri bundle is not supported.
+third-party art). Only the five files a desktop bundle actually reads are kept (`.ico`, `.icns`,
+and three PNG sizes); the iOS AppIcon set and the Windows Store logos that `tauri icon` also emits
+are removed, and `bundle.targets` lists the desktop formats explicitly instead of `all`.
+macOS and Windows **installers** additionally need those hosts; cross-compiling a Tauri bundle is
+not supported.
 
 ### Weight, measured and estimated
 
@@ -275,7 +307,7 @@ a Tauri bundle is not supported.
 | `index.html` (web build) | 200 KB / **49 KB gzip** | measured |
 | Runtime dependencies | **0** | measured |
 | Network calls at runtime | **0** | measured |
-| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **4 MiB** | measured by CI on every push; hard budget 20 MiB |
+| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **3 MiB** | measured by CI on every push; hard budget 20 MiB |
 | Electron equivalent | ~150 MB | reference point, and it bundles Chromium |
 
 The desktop build ships no browser engine: it uses the OS webview already on your machine.
@@ -341,7 +373,9 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 ## 🎯 Technical Specifications
 
 - **Architecture**: one `index.html` with inlined CSS + vanilla JS. No framework, no bundler at runtime.
-- **Size**: ≈200 KB total (49 KB gzip) — ≈40 KB of that is Tailwind CSS compiled ahead of time and inlined.
+- **Size**: 200 KB raw / 49 KB gzip — about 31 KB of that is Tailwind CSS compiled ahead of time and
+  inlined. (The badge above is *generated* from the file by `npm run badge` and verified by
+  `tests/integrity.test.mjs`, so it cannot drift from the artifact again.)
 - **Network**: **none**. No `<script src>`, no `@import`, no fonts, no analytics. Works fully offline from `file://`.
 - **Runtime dependencies**: zero.
 - **Theme**: Tokyo Night (`#1a1b26`, `#16161e`, `#7dcfff`, `#bb9af7`, `#9ece6a`, `#f7768e`) via `--tn-*` variables.

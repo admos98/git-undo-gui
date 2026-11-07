@@ -13,7 +13,7 @@
  *   3. The safety rules line up: `RESET` acknowledges a hard reset, the backup
  *      branch is agreed on both sides, and `--force` never appears.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { boot, createSuite, ROOT, wait } from "./harness.mjs";
 
@@ -201,6 +201,65 @@ suite.test("strategy strings are exactly branch|soft|files|hard", async () => {
 
 // -------------------------------------------------------------- guardrails
 
+suite.test("every surface that names the phrase names the right one", async () => {
+  // The failure mode: the input placeholder says UNDO while the label says RESET.
+  const h = await bootDesktop();
+  await h.app("loadRepository('/home/dev/project')");
+
+  const snapshot = () => ({
+    label: h.text("confirm-phrase"),
+    placeholder: h.d.getElementById("confirm-input").placeholder,
+    status: h.text("confirm-status-msg"),
+    why: (h.d.getElementById("confirm-why") || {}).textContent || "",
+    note: h.d.getElementById("demo-mode-note").textContent,
+  });
+
+  const problems = [];
+
+  // Soft on a real repo: copies nothing, runs, phrase UNDO.
+  h.app("selectEntry(1); updateStrategy('soft'); openConfirmModal()");
+  let seen = snapshot();
+  if (seen.placeholder !== "Type UNDO") problems.push(`soft placeholder: ${seen.placeholder}`);
+  if (seen.label !== "UNDO") problems.push(`soft label: ${seen.label}`);
+  if (!/copies a command/i.test(seen.why)) problems.push(`soft explanation: ${seen.why}`);
+
+  // Switching to hard must repaint everything, not just the label.
+  h.app("updateStrategy('hard')");
+  seen = snapshot();
+  if (seen.label !== "RESET") problems.push(`hard label: ${seen.label}`);
+  if (seen.placeholder !== "Type RESET") problems.push(`hard placeholder: ${seen.placeholder}`);
+  if (/UNDO/.test(seen.status)) problems.push(`hard status still mentions UNDO: ${seen.status}`);
+  if (!/reset --hard/.test(seen.why)) problems.push(`hard explanation: ${seen.why}`);
+
+  // And switching back must restore it, so the dialog is never stuck.
+  h.app("updateStrategy('soft')");
+  seen = snapshot();
+  if (seen.placeholder !== "Type UNDO") problems.push(`back to soft: ${seen.placeholder}`);
+
+  return problems.length === 0 || problems.join(" | ");
+});
+
+suite.test("the web build never says RESET", async () => {
+  // In a browser nothing executes, so a destructive-sounding phrase would be a lie.
+  const h = await boot(IMPORTED);
+  for (const strategy of ["soft", "branch", "restore", "hard"]) {
+    h.app(`selectEntry(1); updateStrategy('${strategy}')`);
+    const needed = h.app("requiredPhrase()");
+    if (needed !== "UNDO") return `${strategy} in the web build demands "${needed}"`;
+  }
+  return true;
+});
+
+suite.test("the demo tour types whatever the dialog asks for", async () => {
+  const source = readFileSync(resolve(ROOT, "index.html"), "utf8");
+  // Hardcoded letters are how the placeholder and the gate drifted apart.
+  if (/const letters = \["U", "N", "D", "O"\]/.test(source)) {
+    return "the tour still hardcodes the letters U-N-D-O instead of asking requiredPhrase()";
+  }
+  return /const letters = requiredPhrase\(\)\.split\(""\)/.test(source)
+    || "the tour no longer derives the phrase from requiredPhrase()";
+});
+
 suite.test("a hard reset demands RESET, never the everyday UNDO", async () => {
   const guard = rust("logic/src/guard.rs");
   const phrase = guard.match(/ACK_PHRASE:\s*&str\s*=\s*"([^"]+)"/);
@@ -288,19 +347,46 @@ suite.test("a successful reset reports the way back", async () => {
   return reads >= 2 || `reflog read ${reads} time(s); expected a refresh after the reset`;
 });
 
+suite.test("the bundle ships no icons it cannot use", async () => {
+  const conf = JSON.parse(rust("tauri.conf.json"));
+  const icons = conf.bundle.icon.join(" ");
+  // A desktop bundle needs the Windows .ico, the macOS .icns and a PNG set.
+  for (const needed of ["32x32.png", "128x128.png", "icon.ico", "icon.icns"]) {
+    if (!icons.includes(needed)) return `bundle is missing ${needed}`;
+  }
+  // iOS/Android/Store artwork is dead weight for a desktop app and quietly
+  // reappears when someone re-runs `tauri icon`.
+  const dir = resolve(ROOT, "src-tauri", "icons");
+  const bloat = readdirSync(dir).filter((f) => /^(Square|StoreLogo|ios|android)/.test(f));
+  if (bloat.length) return `unused platform artwork: ${bloat.join(", ")}`;
+  if (!Array.isArray(conf.bundle.targets) || conf.bundle.targets.includes("all")) {
+    return "bundle.targets is 'all', which pulls Windows Store artwork back in";
+  }
+  return true;
+});
+
 // ------------------------------------------------------- desktop packaging
 
-suite.test("the desktop build ships the same page as the web build", async () => {
-  // tauri embeds src-tauri/assets/index.html; if that drifts from dist the
-  // desktop app silently runs an older UI. Compare against the committed source.
-  const source = readFileSync(resolve(ROOT, "index.html"), "utf8");
-  const embedded = readFileSync(resolve(ROOT, "src-tauri", "assets", "index.html"), "utf8");
-  if (embedded !== source) {
-    return "src-tauri/assets/index.html is stale — run `npm run build && npm run embed:web`";
+suite.test("the embedded copy is generated, not committed", async () => {
+  // Two 200 KB copies of the same file in git is diff noise that makes
+  // contributors wonder which one is real. The copy is a build artifact.
+  const ignore = readFileSync(resolve(ROOT, ".gitignore"), "utf8");
+  if (!/src-tauri\/assets\/index\.html/.test(ignore)) {
+    return "src-tauri/assets/index.html is not gitignored — it is generated by scripts/embed-web.mjs";
+  }
+  // It must still exist for `cargo build` (include_str! runs before the frontend
+  // is rebuilt), and it must match the shipped page when present.
+  const embeddedPath = resolve(ROOT, "src-tauri", "assets", "index.html");
+  if (existsSync(embeddedPath)) {
+    const source = readFileSync(resolve(ROOT, "index.html"), "utf8");
+    const embedded = readFileSync(embeddedPath, "utf8");
+    if (embedded !== source) {
+      return "the generated copy is stale — run `npm run embed:web` (a build does this automatically)";
+    }
   }
   // And the frontend must not depend on a bundled JS package to find the bridge.
-  if (!/window\.__TAURI__/.test(source)) return "the UI no longer looks for the Tauri global";
-  return true;
+  const html = readFileSync(resolve(ROOT, "index.html"), "utf8");
+  return /window\.__TAURI__/.test(html) || "the UI no longer looks for the Tauri global";
 });
 
 suite.test("the shell serves the page itself and loads nothing remote", async () => {
@@ -313,6 +399,28 @@ suite.test("the shell serves the page itself and loads nothing remote", async ()
   // The bridge is injected by the shell, so the app needs no @tauri-apps/api.
   if (!/__TAURI_INTERNALS__/.test(rust("src/embed.rs"))) return "the shell injects no IPC bridge";
   return true;
+});
+
+suite.test("the repo can produce a patch that carries binary files", async () => {
+  // A patch generated without binary data fails to apply with
+  //   "cannot apply binary patch ... without full index line"
+  // which is a maddening way to lose an afternoon. Two causes, both closed here:
+  // .gitattributes marking icon files as text, and nobody noticing.
+  const attrsPath = resolve(ROOT, ".gitattributes");
+  if (!existsSync(attrsPath)) return ".gitattributes is missing — binary assets rely on git defaults";
+  const attrs = readFileSync(attrsPath, "utf8");
+
+  const problems = [];
+  for (const ext of ["png", "ico", "icns"]) {
+    if (!new RegExp(`\\*\\.${ext}\\s+binary`).test(attrs)) problems.push(`${ext} is not marked binary`);
+  }
+  if (!/\* text=auto/.test(attrs)) problems.push("no text=auto rule for line endings");
+
+  // The icons it protects must actually exist, or the test proves nothing.
+  const icons = readdirSync(resolve(ROOT, "src-tauri", "icons"));
+  if (!icons.some((f) => f.endsWith(".png"))) problems.push("no PNG icons found to protect");
+
+  return problems.length === 0 || problems.join("; ");
 });
 
 // --------------------------------------------------------------- lightness

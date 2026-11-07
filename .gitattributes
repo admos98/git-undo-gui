@@ -1,0 +1,21 @@
+# Normalise text, never binaries.
+#
+# Without this, `git diff` prints "Binary files differ" for icon changes instead
+# of a real patch, so `git apply` on a generated patch fails with
+# "cannot apply binary patch ... without full index line". It also stops
+# line-ending conversion from corrupting PNG/ICO/ICNS bytes on a Windows checkout.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.gif binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+
+# Generated artifacts are written by scripts/, not authored by hand.
+src-tauri/assets/index.html linguist-generated=true

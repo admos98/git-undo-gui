@@ -26,14 +26,15 @@
   "scripts": {
     "css:build": "node src/build-css.mjs",
     "dev": "npm run css:build && vite --port=3000 --host=0.0.0.0",
-    "build": "npm run css:build && vite build",
+    "build": "npm run css:build && vite build && node scripts/sync-badge.mjs",
     "preview": "vite preview --port=4173 --host=0.0.0.0",
     "test": "node tests/run.mjs",
     "test:ci": "npm run css:build && node tests/run.mjs",
     "tauri": "tauri",
     "tauri:dev": "npm run build && npm run embed:web && tauri dev",
     "tauri:build": "npm run build && npm run embed:web && tauri build",
-    "embed:web": "node scripts/embed-web.mjs"
+    "embed:web": "node scripts/embed-web.mjs",
+    "badge": "node scripts/sync-badge.mjs"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.14",

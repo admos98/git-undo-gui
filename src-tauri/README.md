@@ -37,7 +37,7 @@ npm run tauri:build
 | `src/lib.rs` | Exactly four `#[tauri::command]` functions. If you add a fifth, `tests/executor.test.mjs` fails on purpose. |
 | `capabilities/default.json` | Grants `core:default` + `dialog:allow-open`. Nothing network-facing. |
 | `src/embed.rs` | Serves the built page from inside the binary over a custom protocol, and injects the `__TAURI__` bridge the UI expects. |
-| `assets/index.html` | The compiled-in copy of `dist/index.html`, kept in sync by `scripts/embed-web.mjs`. |
+| `assets/index.html` | **Generated, gitignored.** A copy of `dist/index.html` that `include_str!` can see before the frontend is rebuilt. `npm run build` writes it; CI regenerates it before compiling. It is a build artifact, not a source file — edit `index.html` at the repo root. |
 | `tauri.conf.json` | Window loads `http://app.localhost/` (served locally, no port); CSP `default-src 'none'; connect-src 'none'`. |
 
 ## What it will not do
@@ -46,6 +46,8 @@ npm run tauri:build
 - No `--force`, ever. Push recovery uses `--force-with-lease`.
 - No hard reset without (a) a typed `RESET`, (b) a clean tracked working tree, and (c) a
   `backup-before-recovery` branch written first.
+- No stale backup offered as an undo: if the branch predates this reset, the reported undo is the
+  pre-reset commit, and the branch is named with its date as something to inspect.
 
 ## Bundling notes
 
