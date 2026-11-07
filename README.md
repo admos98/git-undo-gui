@@ -294,7 +294,7 @@ not supported.
 | `index.html` (web build) | 200 KB / **49 KB gzip** | measured |
 | Runtime dependencies | **0** | measured |
 | Network calls at runtime | **0** | measured |
-| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **4 MiB** | measured by CI on every push; hard budget 20 MiB |
+| Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | **3 MiB** | measured by CI on every push; hard budget 20 MiB |
 | Electron equivalent | ~150 MB | reference point, and it bundles Chromium |
 
 The desktop build ships no browser engine: it uses the OS webview already on your machine.
