@@ -35,7 +35,24 @@ pub struct ResetOutcome {
     pub report: OpReport,
     /// HEAD before the reset — what `undo` walks back to.
     pub previous_head: String,
+    /// Kept for compatibility; `backup` carries the detail the UI displays.
     pub backup_branch: Option<String>,
+    pub backup: Option<BackupReport>,
+}
+
+/// What the UI needs to describe the safety net honestly.
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupReport {
+    pub branch: String,
+    /// Commit the branch holds — not necessarily the one you just left.
+    pub commit: String,
+    /// Short date of that commit.
+    pub date: String,
+    /// Created by this reset, or inherited from an earlier one.
+    pub created: bool,
+    /// True when the branch points at HEAD, i.e. it holds the state you are
+    /// about to leave. False means it is older and is not a way back.
+    pub covers_head: bool,
 }
 
 /// Read everything the UI needs. Read-only: safe to call on every keystroke.
@@ -84,6 +101,52 @@ pub fn read_state(root: &Path) -> GitResult<RepoState> {
     })
 }
 
+/// What `git_repo_state` returns: the working-tree facts plus a read-only look
+/// at the backup branch, so the UI can warn *before* a reset that the safety net
+/// it is about to rely on is stale.
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoView {
+    #[serde(flatten)]
+    pub state: RepoState,
+    pub backup: Option<BackupReport>,
+}
+
+/// Inspect the backup branch without creating or moving anything.
+pub fn probe_backup(git: &Git) -> GitResult<Option<BackupReport>> {
+    let head = git
+        .probe(&["rev-parse", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let Some(commit) = git
+        .probe(&["rev-parse", "--verify", "--quiet", &format!("refs/heads/{BACKUP_BRANCH}")])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let date = git
+        .probe(&["log", "-1", "--format=%cd", "--date=short", &commit])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    Ok(Some(BackupReport {
+        branch: BACKUP_BRANCH.to_string(),
+        covers_head: commit == head,
+        commit,
+        date,
+        created: false,
+    }))
+}
+
+pub fn read_view(root: &Path) -> GitResult<RepoView> {
+    let state = read_state(root)?;
+    let git = Git::open(root)?;
+    let backup = probe_backup(&git)?;
+    Ok(RepoView { state, backup })
+}
+
 pub fn read_reflog(root: &Path, limit: usize) -> GitResult<String> {
     let git = Git::open(root)?;
     let limit = limit.clamp(1, 500).to_string();
@@ -91,20 +154,76 @@ pub fn read_reflog(root: &Path, limit: usize) -> GitResult<String> {
     git.run(&["reflog", "show", &format!("-{limit}"), "--date=iso", "--format=%h %gd: %gs"])
 }
 
+/// What a backup branch actually is — not just whether we created one.
+///
+/// The name `backup-before-recovery` promises "before *this* recovery". Since the
+/// branch is idempotent, an old backup keeps that promise falsely, and an undo
+/// hint pointing at it can rewind a user *past* the state they were trying to
+/// recover. So callers get the commit and the date, and can say what it really is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Backup {
+    pub branch: String,
+    /// Commit the backup branch points at.
+    pub commit: String,
+    /// When that commit was made (short date), for "existing backup from ...".
+    pub date: String,
+    /// True when this call created the branch, false when one already existed.
+    pub created: bool,
+    /// True when the backup already points at HEAD, i.e. it is a valid way back
+    /// from the reset about to happen. False for a stale backup.
+    pub covers_head: bool,
+}
+
+impl Backup {
+    /// Can `git reset --hard <branch>` reliably undo the reset we are about to do?
+    ///
+    /// Only if the branch already points at the current HEAD. If it points
+    /// somewhere older, following it would discard everything since — the
+    /// opposite of a safety net.
+    pub fn is_safe_undo(&self) -> bool {
+        self.covers_head
+    }
+}
+
 /// Create `backup-before-recovery` at the current HEAD, idempotently.
-/// Returns (branch name, whether it was created now).
-pub fn create_backup(git: &Git) -> GitResult<(String, bool)> {
+pub fn create_backup(git: &Git) -> GitResult<Backup> {
+    let head = git
+        .probe(&["rev-parse", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .ok_or_else(|| GitError::internal("cannot resolve HEAD — does this repository have commits?"))?;
+
     let existing = git
         .probe(&["rev-parse", "--verify", "--quiet", &format!("refs/heads/{BACKUP_BRANCH}")])
-        .is_some();
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
-    if existing {
-        // Keep the newest backup; report the old one so nothing is silently lost.
-        return Ok((BACKUP_BRANCH.to_string(), false));
+    if let Some(commit) = existing {
+        // Never overwrite: the newest backup wins, and the old one is reported.
+        let date = git
+            .probe(&["log", "-1", "--format=%cd", "--date=short", &commit])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        return Ok(Backup {
+            branch: BACKUP_BRANCH.to_string(),
+            covers_head: commit == head,
+            commit,
+            date,
+            created: false,
+        });
     }
 
     git.run(&["branch", BACKUP_BRANCH, "HEAD"])?;
-    Ok((BACKUP_BRANCH.to_string(), true))
+    let date = git
+        .probe(&["log", "-1", "--format=%cd", "--date=short", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    Ok(Backup {
+        branch: BACKUP_BRANCH.to_string(),
+        commit: head.clone(),
+        date,
+        created: true,
+        covers_head: true,
+    })
 }
 
 pub fn reset(
@@ -141,12 +260,9 @@ pub fn reset(
     let risks = assess(&state, &kind, ack, &previous_head, target).map_err(GitError::refused)?;
 
     // ---- backup first, always ----
-    let (backup_branch, created) = match kind {
-        ResetKind::Branch => (None, false),
-        _ => {
-            let (name, created) = create_backup(&git)?;
-            (Some(name), created)
-        }
+    let backup = match kind {
+        ResetKind::Branch => None,
+        _ => Some(create_backup(&git)?),
     };
 
     // ---- act ----
@@ -182,14 +298,21 @@ pub fn reset(
         }
     };
 
-    let undo = match (&backup_branch, created) {
-        (Some(name), true) => Some(format!(
-            "git reset --hard {name}   # restores exactly the state you were in a moment ago"
+    // The undo hint has to be safe to follow blindly, because that is what people
+    // do with an undo. A stale backup branch is NOT one — following it would jump
+    // back to whenever it was made, discarding everything since. So in that case
+    // the way back is the pre-reset commit itself, and the stale branch is
+    // mentioned as something to inspect rather than something to reset to.
+    let undo = match &backup {
+        Some(b) if b.is_safe_undo() => Some(format!(
+            "git reset --hard {}   # restores exactly the state you were in a moment ago",
+            b.branch
         )),
-        (Some(name), false) => Some(format!(
-            "git reset --hard {name}   # note: this backup predates this reset, check `git log {name}`"
+        Some(b) => Some(format!(
+            "git reset --hard {previous_head}   # undo this reset ({} is older, from {} — inspect with `git log {}`)",
+            b.branch, b.date, b.branch
         )),
-        (None, _) => None,
+        None => None,
     };
 
     Ok(ResetOutcome {
@@ -205,7 +328,14 @@ pub fn reset(
             risks,
         },
         previous_head,
-        backup_branch,
+        backup_branch: backup.as_ref().map(|b| b.branch.clone()),
+        backup: backup.map(|b| BackupReport {
+            branch: b.branch,
+            commit: b.commit,
+            date: b.date,
+            created: b.created,
+            covers_head: b.covers_head,
+        }),
     })
 }
 

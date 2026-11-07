@@ -2463,6 +2463,17 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
       if (state.unpushed.length) {
         lines.push(`<div class="text-[#f7768e]">↑ ${state.unpushed.length} unpushed commit(s) — the backup branch protects these</div>`);
       }
+      // "backup-before-recovery" is only a safety net for *this* reset when it
+      // already points at HEAD. An older one is a trap: following it rewinds past
+      // today. Warn while the user can still cancel.
+      const existing = state.backup;
+      if (existing && !existing.covers_head) {
+        lines.push(
+          `<div class="text-[#e0af68]">⚠ Backup branch <code class="font-mono">${escapeHtml(existing.branch)}</code> already exists from ` +
+          `<strong>${escapeHtml(existing.date || "an earlier session")}</strong> and will not be moved. ` +
+          `The undo offered after this reset will point at the commit itself, not that branch.</div>`
+        );
+      }
       lines.push(`<div class="pt-1"><button type="button" id="btn-backup" onclick="createBackupBranch()" class="text-[10px] font-semibold px-2 py-1 rounded border border-[#7aa2f7]/40 text-[#7aa2f7] hover:bg-[#7aa2f7]/10 transition cursor-pointer">Create backup branch first</button></div>`);
       box.innerHTML = lines.join("");
       box.classList.remove("hidden");
@@ -2475,7 +2486,10 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
       if (button) { button.disabled = true; button.textContent = "Creating…"; }
       try {
         const report = await invoke("git_create_backup", { path: repoPath });
-        showModalResult(`<div class="font-bold">✓ ${escapeHtml(report.message)}</div><div><code class="font-mono">${escapeHtml(report.now_at)}</code></div>`, "ok");
+        showModalResult(
+          `<div class="font-bold">✓ ${escapeHtml(report.message)}</div><div><code class="font-mono">${escapeHtml(report.now_at)}</code></div>`,
+          "ok"
+        );
         await refreshRepoState();
       } catch (err) {
         showModalResult(`<div class="font-bold">Could not create the backup</div><div>${escapeHtml(humanizeGitError(err))}</div>`, "err");
@@ -2521,11 +2535,18 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
         const undoLine = outcome.undo
           ? `<div class="pt-1 border-t border-current/20">Undo this reset: <code class="font-mono">${escapeHtml(outcome.undo)}</code></div>`
           : "";
+        const backup = outcome.backup;
+        const backupLine = !backup ? ""
+          : backup.safe_undo
+            ? `<div class="pt-1">Safety net: <code class="font-mono">${escapeHtml(backup.branch)}</code> holds the state you just left.</div>`
+            : `<div class="pt-1 text-[#e0af68]">Safety net: <code class="font-mono">${escapeHtml(backup.branch)}</code> is older ` +
+              `(${escapeHtml(backup.date || "unknown date")}) and does <strong>not</strong> contain what you just left. ` +
+              `The undo above points at the commit itself.</div>`;
         const riskLine = (outcome.risks || []).map(r => `<div>• ${escapeHtml(r.message)}</div>`).join("");
         showModalResult(
           `<div class="font-bold">✓ ${escapeHtml(outcome.message)}</div>
            <div>Now at <code class="font-mono">${escapeHtml(outcome.now_at)}</code></div>
-           ${riskLine}${undoLine}`,
+           ${riskLine}${backupLine}${undoLine}`,
           "ok"
         );
         button.textContent = "Done";

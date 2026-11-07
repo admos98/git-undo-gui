@@ -16,8 +16,9 @@ mod git;
 mod service;
 
 pub use git_undo_logic::error::GitError;
-use git_undo_logic::state::RepoState;
-use service::{OpReport, ResetOutcome};
+#[cfg(test)]
+pub use git::Git;
+use service::{OpReport, RepoView, ResetOutcome};
 use std::path::PathBuf;
 
 /// Only these four operations are reachable from the frontend.
@@ -28,31 +29,37 @@ fn git_read_reflog(path: String, limit: Option<usize>) -> Result<String, GitErro
 }
 
 #[tauri::command]
-fn git_repo_state(path: String) -> Result<RepoState, GitError> {
-    service::read_state(&PathBuf::from(path))
+fn git_repo_state(path: String) -> Result<RepoView, GitError> {
+    service::read_view(&PathBuf::from(path))
 }
 
 #[tauri::command]
 fn git_create_backup(path: String) -> Result<OpReport, GitError> {
     let root = PathBuf::from(path);
     let g = git::Git::open(&root)?;
-    let (name, created) = service::create_backup(&g)?;
+    let backup = service::create_backup(&g)?;
     Ok(OpReport {
         ok: true,
-        command: format!("git branch {name} HEAD"),
-        // Name the branch that now holds the current history, so the safety net is
-        // visible in the app rather than only in the terminal.
-        now_at: {
-            let head = g
-                .probe(&["rev-parse", "--short", "HEAD"])
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-            format!("{name} @ {head}")
-        },
-        message: if created {
-            format!("Backup branch {name} created at the current HEAD.")
+        command: format!("git branch {} HEAD", backup.branch),
+        // Name the branch *and* the commit it holds. "backup-before-recovery" is a
+        // promise; the date is what tells you whether it still keeps it.
+        now_at: format!("{} @ {} ({})", backup.branch, &backup.commit[..7.min(backup.commit.len())], backup.date),
+        message: if backup.created {
+            format!(
+                "Backup branch {} now holds your current HEAD. Resetting cannot lose it.",
+                backup.branch
+            )
+        } else if backup.covers_head {
+            format!(
+                "Backup branch {} already exists and already points at your current HEAD — nothing to add.",
+                backup.branch
+            )
         } else {
-            format!("Backup branch {name} already exists and was left untouched.")
+            format!(
+                "Backup branch {} already exists from {} and was left untouched. It does NOT contain \
+                 your latest work, so it is not a way back from a reset you do next.",
+                backup.branch, backup.date
+            )
         },
         undo: None,
         risks: vec![],

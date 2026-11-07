@@ -240,6 +240,90 @@ fn the_backup_is_idempotent_and_never_silently_overwritten() {
 }
 
 #[test]
+fn a_stale_backup_is_reported_and_never_offered_as_the_undo() {
+    // The trap: `backup-before-recovery` exists from an earlier session. Following
+    // it would rewind *past* today, so it must not be presented as the way back.
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, second) = two_commits(&scratch);
+
+    // An old backup pointing at the first commit…
+    scratch.git(&["branch", "backup-before-recovery", &first]);
+    // …then real work on top, which the reset will move away from.
+    scratch.write("notes.md", "third\n");
+    let third = scratch.commit("third");
+    assert_ne!(first, second);
+    assert_ne!(third, second);
+
+    let outcome = service::reset(scratch.path(), &second, "hard", Some("RESET"))
+        .expect("hard reset with an old backup present");
+
+    let backup = outcome.backup.as_ref().expect("backup reported");
+    assert!(!backup.created, "the existing branch is reused, not replaced");
+    assert!(!backup.covers_head, "an older backup is not a safe undo for this reset");
+    assert_eq!(backup.commit, first, "the stale branch was not moved");
+
+    let undo = outcome.report.undo.expect("an undo hint");
+    assert!(
+        undo.contains(&third),
+        "the undo must point at the pre-reset commit, not the stale branch: {undo}"
+    );
+    // And following the hint must actually work.
+    assert_eq!(scratch.head(), second);
+    scratch.git(&["reset", "--hard", &third]);
+    assert_eq!(scratch.contents("notes.md"), "third\n", "the offered undo restores the work");
+}
+
+#[test]
+fn a_backup_that_already_holds_head_is_safe_and_reported_as_such() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, second) = two_commits(&scratch);
+
+    // Same commit, so the existing branch really is the way back.
+    scratch.git(&["branch", "backup-before-recovery", &second]);
+    let outcome = service::reset(scratch.path(), &first, "hard", Some("RESET")).expect("reset");
+
+    let backup = outcome.backup.as_ref().expect("backup reported");
+    assert!(!backup.created);
+    assert!(backup.covers_head, "a backup at HEAD is a valid undo");
+    assert_eq!(backup.commit, second);
+    assert!(outcome.report.undo.expect("undo").contains("backup-before-recovery"));
+}
+
+#[test]
+fn the_backup_report_carries_a_date_so_the_ui_can_say_how_old_it_is() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, _second) = two_commits(&scratch);
+
+    let backup = service::create_backup(&crate::Git::open(scratch.path()).expect("open")).expect("backup");
+    assert!(backup.created);
+    assert!(backup.covers_head);
+    assert_eq!(backup.date.len(), 10, "expected YYYY-MM-DD, got {:?}", backup.date);
+    assert_eq!(backup.commit, scratch.git(&["rev-parse", "HEAD"]));
+    assert_ne!(backup.commit, first);
+}
+
+#[test]
+fn probing_the_backup_never_creates_or_moves_a_branch() {
+    let Some(scratch) = Scratch::new() else { return };
+    two_commits(&scratch);
+
+    // Absent: the probe reports nothing and creates nothing.
+    let view = service::read_view(scratch.path()).expect("view");
+    assert!(view.backup.is_none());
+    assert!(!scratch.has_branch("backup-before-recovery"), "a read must not create a branch");
+
+    // Present: reported with its date, still not moved.
+    let head = scratch.head();
+    scratch.git(&["branch", "backup-before-recovery", &head]);
+    let view = service::read_view(scratch.path()).expect("view");
+    let backup = view.backup.expect("backup visible");
+    assert!(backup.covers_head);
+    assert_eq!(backup.commit, head);
+    assert_eq!(backup.date.len(), 10);
+    assert_eq!(scratch.git(&["rev-parse", "backup-before-recovery"]), head);
+}
+
+#[test]
 fn files_strategy_restores_contents_without_moving_head() {
     let Some(scratch) = Scratch::new() else { return };
     let (first, second) = two_commits(&scratch);
