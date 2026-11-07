@@ -13,11 +13,12 @@ permissions:
 
 jobs:
   test:
-    name: Tests (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node: [20, 22]
     steps:
       - uses: actions/checkout@v4
@@ -32,5 +33,7 @@ jobs:
       - run: npm test
 
       # Fails if the committed index.html was built from stale sources.
+      # Linux owns byte-for-byte reproducibility; Windows rounds OKLab channels differently.
       - name: Artifact is reproducible
+        if: runner.os != 'Windows'
         run: git diff --exit-code -- index.html

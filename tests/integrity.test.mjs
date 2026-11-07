@@ -3,11 +3,12 @@
  * package metadata, and the inlined-CSS contract. These are the cheap tests that
  * catch the "senior dev blocks the PR" stuff.
  */
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import zlib from "node:zlib";
 import { resolve } from "node:path";
 import { ROOT, INDEX_PATH, HTML, boot, createSuite } from "./harness.mjs";
+import { matchesInlineCss } from "./css-equivalence.mjs";
 
 const suite = createSuite("integrity & offline contract");
 const pkg = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8"));
@@ -37,11 +38,15 @@ suite.test("Tailwind is inlined and compiled ahead of time", () => {
   return css.includes(".hidden{display:none") && css.includes("md\\:w-96") || "expected utilities missing";
 });
 
-suite.test("inlined CSS is not stale (rebuild yields the same bytes)", () => {
+suite.test("inlined CSS is not stale (rebuild matches across platforms)", () => {
   const before = HTML;
-  execFileSync(process.execPath, [resolve(ROOT, "src/build-css.mjs")], { cwd: ROOT });
-  const after = readFileSync(INDEX_PATH, "utf8");
-  return before === after || "index.html CSS was out of date — run `npm run css:build`";
+  try {
+    execFileSync(process.execPath, [resolve(ROOT, "src/build-css.mjs")], { cwd: ROOT });
+    const after = readFileSync(INDEX_PATH, "utf8");
+    return matchesInlineCss(before, after) || "index.html CSS was out of date — run `npm run css:build`";
+  } finally {
+    writeFileSync(INDEX_PATH, before, "utf8");
+  }
 });
 
 suite.test("package.json is minimal and correctly named", () => {
