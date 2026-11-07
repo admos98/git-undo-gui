@@ -263,9 +263,15 @@ fn a_stale_backup_is_reported_and_never_offered_as_the_undo() {
     assert_eq!(backup.commit, first, "the stale branch was not moved");
 
     let undo = outcome.report.undo.expect("an undo hint");
+    // The hint uses the short hash, so compare against the short form.
     assert!(
-        undo.contains(&third),
-        "the undo must point at the pre-reset commit, not the stale branch: {undo}"
+        undo.contains(&third[..7]),
+        "the undo must point at the pre-reset commit: {undo}"
+    );
+    // The important half: it must not tell anyone to reset to the stale branch.
+    assert!(
+        !undo.contains("reset --hard backup-before-recovery"),
+        "the stale branch must never be the undo target: {undo}"
     );
     // And following the hint must actually work.
     assert_eq!(scratch.head(), second);
