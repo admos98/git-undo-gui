@@ -160,6 +160,19 @@ npm test -- parsers   # filter by suite file
 CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 `src/tailwind.css` (`.github/workflows/ci.yml`).
 
+### Sharing work as a patch
+
+`git diff` alone prints `Binary files differ` for the icons, and the resulting patch cannot be
+applied (`cannot apply binary patch … without full index line`). Use one of:
+
+```bash
+git diff --binary main..HEAD > changes.patch   # apply with: git apply changes.patch
+git format-patch --stdout main..HEAD           # format-patch includes binaries by default
+```
+
+`.gitattributes` marks `png/ico/icns` as binary so they are never line-ending-normalised, and a
+test fails if that file goes missing. Better still, push the branch — nobody needs a patch.
+
 ---
 
 ## 🔒 Security model

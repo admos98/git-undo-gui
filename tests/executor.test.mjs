@@ -401,6 +401,28 @@ suite.test("the shell serves the page itself and loads nothing remote", async ()
   return true;
 });
 
+suite.test("the repo can produce a patch that carries binary files", async () => {
+  // A patch generated without binary data fails to apply with
+  //   "cannot apply binary patch ... without full index line"
+  // which is a maddening way to lose an afternoon. Two causes, both closed here:
+  // .gitattributes marking icon files as text, and nobody noticing.
+  const attrsPath = resolve(ROOT, ".gitattributes");
+  if (!existsSync(attrsPath)) return ".gitattributes is missing — binary assets rely on git defaults";
+  const attrs = readFileSync(attrsPath, "utf8");
+
+  const problems = [];
+  for (const ext of ["png", "ico", "icns"]) {
+    if (!new RegExp(`\\*\\.${ext}\\s+binary`).test(attrs)) problems.push(`${ext} is not marked binary`);
+  }
+  if (!/\* text=auto/.test(attrs)) problems.push("no text=auto rule for line endings");
+
+  // The icons it protects must actually exist, or the test proves nothing.
+  const icons = readdirSync(resolve(ROOT, "src-tauri", "icons"));
+  if (!icons.some((f) => f.endsWith(".png"))) problems.push("no PNG icons found to protect");
+
+  return problems.length === 0 || problems.join("; ");
+});
+
 // --------------------------------------------------------------- lightness
 
 suite.test("the executor adds no runtime dependency to the web build", async () => {
