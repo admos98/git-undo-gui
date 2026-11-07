@@ -6,6 +6,8 @@ on:
   pull_request:
 
 # The app is a single static file; CI only needs Node for jsdom + Tailwind.
+# The Rust side has its own workflow (compile-check.yml): it builds the release
+# binary, runs the end-to-end repository tests, and enforces a size budget.
 permissions:
   contents: read
 
@@ -32,46 +34,3 @@ jobs:
       # Fails if the committed index.html was built from stale sources.
       - name: Artifact is reproducible
         run: git diff --exit-code -- index.html
-
-  # The guard rules are the part of the desktop build that can destroy data, so
-  # they get their own job. They live in a dependency-free crate, which means the
-  # rules are testable without Tauri, a display, or a target repository.
-  logic:
-    name: Guard rules (Rust)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Unit-test the pure logic crate
-        working-directory: src-tauri/logic
-        run: cargo test --no-default-features --offline
-
-      - name: Check the crate compiles with serde enabled too
-        working-directory: src-tauri/logic
-        run: cargo check --offline
-
-  # The Tauri crate itself needs the platform webview libraries; it is checked,
-  # not shipped, on every push so a broken IPC signature is caught early.
-  shell:
-    name: Desktop shell compiles (Rust)
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev libgtk-3-dev patchelf
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: cargo check the shell
-        working-directory: src-tauri
-        run: cargo check --all-targets
