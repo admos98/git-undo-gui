@@ -11,6 +11,11 @@ build/
 
 # Tauri
 .tauri/
+# Generated at build time by scripts/embed-web.mjs from dist/index.html. It is a
+# copy of the UI, so committing it means every frontend edit touches two 200 KB
+# files and contributors get to wonder which one is real. CI regenerates it
+# before compiling, and tests/executor.test.mjs fails if a build ships a stale one.
+src-tauri/assets/index.html
 
 # Logs
 *.log
