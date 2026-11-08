@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
-[![Bundle size](https://img.shields.io/badge/index.html-201%20KB%20raw%20%C2%B7%2050%20KB%20gzip-7dcfff)](index.html)
+[![Bundle size](https://img.shields.io/badge/index.html-204%20KB%20raw%20%C2%B7%2051%20KB%20gzip-7dcfff)](index.html)
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
@@ -53,14 +53,27 @@ operation in progress (merge, rebase, cherry-pick, bisect); a hard reset that wo
 uncommitted changes to tracked files; one without the phrase typed; and a reset with nothing to do.
 
 **Back up.** A `backup-before-recovery` branch is created at the pre-reset HEAD before anything moves.
+The one exception is the rescue-branch strategy, which *is* the backup: it writes its own
+`rescue-<hash>` branch and moves nothing, so a second branch would only be noise. The dialog says
+which of the two you are getting instead of promising a backup either way.
 
 **One command, then report.** Exactly one git command runs; the response says what changed, what it
-cost, and how to undo it. Two subtleties worth stating plainly.
+cost, and how to undo it. Three subtleties worth stating plainly.
 
-**Two confirmation phrases, on purpose.** `UNDO` copies a command; `RESET` runs a destructive one.
-Label, placeholder, locked hint and tour all derive from one constant, so the dialog cannot ask for
-one word in the field and another in the heading. Collapsing them would make the dangerous path no
-harder to trigger than the harmless one.
+**Two confirmation phrases, on purpose — and an explanation that is not derived from them.**
+`RESET` is reserved for the destructive hard reset; `UNDO` is the everyday acknowledgement. Label,
+placeholder, locked hint and tour all derive from one constant, so the dialog cannot ask for one word
+in the field and another in the heading. The phrase alone does not tell you what happens, though: in
+the desktop build an `UNDO` still runs git. So the sentence under the input is chosen from the
+execution mode and the strategy, never from the word:
+
+| Mode & strategy | What the dialog says happens |
+| :--- | :--- |
+| Browser, any strategy | Copies a command; nothing is changed on disk until you paste it |
+| Desktop, rescue branch | Creates a branch; HEAD, your branch and your files stay put |
+| Desktop, soft reset | HEAD moves; changes stay staged, files on disk untouched |
+| Desktop, restore files | File contents change, history doesn't; dirty paths are refused, not overwritten |
+| Desktop, hard reset | HEAD and the working tree move; uncommitted work is discarded — needs `RESET` |
 
 **An existing backup branch is never overwritten.** It is idempotent, so after a second reset it may
 hold last month's HEAD while its name still promises "before *this* recovery" — and following it
@@ -89,7 +102,7 @@ branch creation `switch -c` — not a blind reset for all three.
 ## Development
 
 ```bash
-npm install && npm test    # 108 checks, jsdom against the shipped index.html
+npm install && npm test    # 123 checks, jsdom against the shipped index.html
 npm run dev                # local server, rebuilds CSS
 npm run build              # regenerates index.html, the size badge, the embedded copy
 npm run badge              # re-measure the size badge only
@@ -107,9 +120,10 @@ opens by double-click with no install and no permissions; for real per-file diff
 `git log -p` rather than `git reflog`. The desktop build removes that limit and is unsigned.
 
 A backup branch keeps unpushed commits alive, but not on your branch — a safety net, not a time
-machine, and no replacement for reading what you are about to run.
+machine, and no replacement for reading what you are about to run. The rescue-branch strategy creates
+`rescue-<hash>` instead and takes no backup, because nothing moves that would need one.
 
-One file of 201 KB raw in total is a deliberate tradeoff: no build step, no dependency to audit, no
+One file of 204 KB raw in total is a deliberate tradeoff: no build step, no dependency to audit, no
 bundle to trust — and 3,700 lines in one place, which the jsdom suite makes safe to keep and does
 not make pleasant to review.
 

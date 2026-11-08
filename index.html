@@ -2232,12 +2232,18 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
       paintStrategyCards();
       updateRangeUI();
       updatePushPanel();
-      // Copy the dialog has to be honest about what the current mode actually does.
+      // The dialog has to be honest about what the current mode actually does.
+      // A pasted reflog is only a copy in the browser: once a repository is open
+      // in the desktop shell the same import is executed, so "Nothing runs until
+      // you paste it" would be a lie there.
       const desc = document.getElementById("confirm-modal-desc");
       const isImported = dataMode === "imported";
-      desc.innerHTML = isImported
-        ? `This copies the command to move your branch to snapshot <strong id="modal-hash" class="text-[#7dcfff] font-mono">${escapeHtml(target.hash)}</strong>. Nothing runs until you paste it.`
-        : `This simulates rewinding your branch HEAD to snapshot <strong id="modal-hash" class="text-[#7dcfff] font-mono">${escapeHtml(target.hash)}</strong> (demo data — no repository is touched).`;
+      const hashTag = `<strong id="modal-hash" class="text-[#7dcfff] font-mono">${escapeHtml(target.hash)}</strong>`;
+      desc.innerHTML = !isImported
+        ? `This simulates rewinding your branch HEAD to snapshot ${hashTag} (demo data — no repository is touched).`
+        : willExecute()
+          ? `This runs the selected strategy against snapshot ${hashTag} on your repository. The line under the input says exactly what changes.`
+          : `This copies the command to move your branch to snapshot ${hashTag}. Nothing runs until you paste it.`;
       document.getElementById("modal-hash").textContent = target.hash;
       const rangeNote = document.getElementById("modal-range-note");
       if (rangeNote) {
@@ -2426,14 +2432,16 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
       const strip = document.querySelector("#undo-outcome span:last-child");
       if (strip) {
         strip.textContent = live
-          ? "runs the reset on your repository — backup branch first"
+          ? "runs the chosen strategy on your repository — check the dialog first"
           : "copies the reset command — run it in your terminal";
       }
       // Demo data is simulated either way, so its own footnote stays untouched.
+      // A real repository can also be loaded before an import, so this note has
+      // to follow the strategy that is actually selected — not just the mode.
       const note = document.getElementById("demo-mode-note");
       if (!note || dataMode !== "imported") return;
       note.textContent = live
-        ? 'Hard resets need "RESET" typed in. A backup-before-recovery branch is taken first.'
+        ? executionNote(true, selectedStrategy)
         : "Paste the command into your terminal; nothing is executed from the page.";
     }
 
@@ -2569,6 +2577,9 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
         showModalResult(`<div class="font-bold">Refused — nothing was changed</div><div>${escapeHtml(humanizeGitError(err))}</div>`, "err");
         button.disabled = false;
         button.textContent = "Proceed with Undo";
+        // A refusal leaves the dialog open on the same strategy, so the
+        // explanation must still describe it rather than drift.
+        paintPhraseLabels();
         showToast("Reset refused", humanizeGitError(err));
       }
     }
@@ -2931,8 +2942,11 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
     // another — that mismatch was real, and it is exactly how someone types the
     // wrong word and concludes the app is broken.
     //
-    // Two phrases are deliberate: "UNDO" copies a command, "RESET" runs a
-    // destructive one. The distinction is explained in the dialog, not assumed.
+    // Two phrases are deliberate: "UNDO" is the everyday acknowledgement,
+    // "RESET" is the destructive one. The phrase alone does not say what happens,
+    // though — an UNDO in the desktop build still runs git — so the explanation
+    // below is chosen from the execution mode and the strategy, never from the
+    // word in the box.
     const PHRASE = { copy: "UNDO", destructive: "RESET" };
 
     // Is the button about to run git for real (as opposed to copying a command)?
@@ -2944,7 +2958,56 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
       return willExecute() && selectedStrategy === "hard" ? PHRASE.destructive : PHRASE.copy;
     }
 
-    // Keep every mention of the phrase in sync with the current mode.
+    /**
+     * What the confirm button will actually do, in one sentence.
+     *
+     * Derived from (executing?, strategy) rather than from the phrase: the browser
+     * copies, the desktop shell runs, and each strategy has its own consequence.
+     * Reading the phrase instead is how the dialog ended up telling people that a
+     * desktop soft reset or rescue branch "changes nothing on disk" — untrue, and
+     * the kind of untrue that gets work destroyed.
+     */
+    function explainOutcome(executing = willExecute(), strategy = selectedStrategy) {
+      if (!executing) {
+        const copied = {
+          soft: "This copies `git reset --soft` for you to run. Nothing is changed on disk.",
+          branch: "This copies `git branch` for you to run. Nothing is changed on disk.",
+          restore: "This copies `git restore` for you to run. Nothing is changed on disk.",
+          hard: "This copies `git reset --hard` for you to run. Nothing is changed on disk — not until you paste it."
+        };
+        return copied[strategy] || "This copies a command for you to run. Nothing is changed on disk.";
+      }
+      switch (strategy) {
+        case "branch":
+          return "This creates a rescue branch at the snapshot. Your HEAD, your branch and your files stay exactly as they are, so nothing can be lost.";
+        case "soft":
+          return "This runs `git reset --soft`: HEAD moves to the snapshot and every change stays staged. The files on disk are not touched.";
+        case "restore":
+          return "This runs `git restore --source=<snapshot>`: file contents change, while commit history stays put. Paths with uncommitted edits are refused rather than overwritten.";
+        default:
+          return "This runs `git reset --hard` on your repository. It moves HEAD and rewrites the working tree, so uncommitted work is discarded — which is why this one asks for RESET rather than the everyday UNDO.";
+      }
+    }
+
+    // The footnote under the hero button says the same thing in fewer words.
+    function executionNote(executing = willExecute(), strategy = selectedStrategy) {
+      if (!executing) {
+        return `Requires typing "${requiredPhrase()}" in the confirmation dialog. Nothing is executed from the page.`;
+      }
+      switch (strategy) {
+        case "branch":
+          return 'Runs on your repository. A rescue branch is created; HEAD and your files stay put.';
+        case "soft":
+          return "Runs on your repository. HEAD moves and your changes stay staged, ready to recommit.";
+        case "restore":
+          return "Runs on your repository. File contents are rewritten; dirty paths are refused, not overwritten.";
+        default:
+          return 'Runs on your repository. Retyping RESET is required because a hard reset discards work.';
+      }
+    }
+
+    // Keep every mention of the phrase — and of what it means — in sync with the
+    // current mode and strategy.
     function paintPhraseLabels(phrase) {
       const needed = phrase || requiredPhrase();
       const label = document.getElementById("confirm-phrase");
@@ -2954,22 +3017,16 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
         input.placeholder = `Type ${needed}`;
         input.setAttribute("aria-label", `Type ${needed} to confirm`);
       }
-      // Why this word and not the other one.
+      // Why this word, and more importantly: what is about to happen.
       const why = document.getElementById("confirm-why");
       if (why) {
-        why.textContent = needed === PHRASE.destructive
-          ? `This runs git reset --hard on your repository. RESET confirms that: "UNDO" alone only copies a command.`
-          : "This copies a command for you to run. Nothing is changed on disk.";
+        why.textContent = explainOutcome(willExecute(), selectedStrategy);
         why.hidden = false;
       }
       // The mode note under the hero button mentions a phrase too.
       const note = document.getElementById("demo-mode-note");
       if (note && dataMode === "imported") {
-        note.textContent = willExecute()
-          ? (needed === PHRASE.destructive
-              ? 'Runs on your repository. Retyping RESET is required because a hard reset discards work.'
-              : "Runs on your repository. UNDO confirms it; a backup branch is taken first.")
-          : `Requires typing "${needed}" in the confirmation dialog. Nothing is executed from the page.`;
+        note.textContent = executionNote(willExecute(), selectedStrategy);
       }
     }
 

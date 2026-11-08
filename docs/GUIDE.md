@@ -20,15 +20,18 @@ push helper, the incident report — exists to make that one decision safe.
 
 There is one deliberate exception: an **optional desktop build** (Tauri) can run the
 reset for you through a four-command, guard-checked bridge. It is opt-in, it never touches the
-web build, and it takes a `backup-before-recovery` branch first. It is experimental — there are
+web build, and it takes a `backup-before-recovery` branch first (except for the rescue-branch
+strategy, which creates `rescue-<hash>` and moves nothing). It is experimental — there are
 no signed installers yet, and it has not had a real click-through release. Everything below describes the
 static build unless it says "desktop".
 
 - Sample data is 6 hand-written entries, clearly labelled **DEMO MODE** in the titlebar.
 - Data you import is labelled **REFLOG** or **GIT LOG** and stays in your browser's `localStorage` only.
 - The undo button always says **UNDO TO THIS SNAPSHOT**. In the browser it copies the reset command for
-  you to run; only the desktop build (with a repository open) runs it, after a backup and a typed
-  confirmation. In demo mode the same flow runs against sample data and is labelled **simulated**.
+  you to run; only the desktop build (with a repository open) runs it, after a typed confirmation
+  and — for every strategy except the rescue branch, which is itself the backup — a
+  `backup-before-recovery` branch. In demo mode the same flow runs against sample data and is labelled
+  **simulated**.
 
 ---
 
@@ -97,7 +100,10 @@ Command-line output is great until you press <kbd>Enter</kbd> on a destructive c
 - **Action-aware commands**: a `stash:` entry becomes `git stash apply`, a `checkout:` entry becomes
   `git switch --detach`, a `branch:` entry becomes `git switch -c recovered-…`. A blind
   `reset --hard` on every row would be wrong for most of them.
-- **Safety interlock**: you must type `UNDO` before the confirm button unlocks.
+- **Safety interlock**: you must type the phrase the dialog asks for before the confirm button
+  unlocks — `UNDO` in the browser, and `RESET` for a hard reset in the desktop build. The sentence
+  under the input says what that particular strategy will do, rather than assuming the phrase
+  describes it.
 - Web Audio chime + canvas confetti when you complete the flow.
 
 ### 3a. 🧰 Multi-entry recovery, undo-push, and reports
@@ -146,7 +152,7 @@ The suite loads the shipped `index.html` into jsdom — it tests the artifact, n
 
 ```bash
 npm install
-npm test              # 102 checks, ~19s
+npm test              # 123 checks, ~19s
 npm test -- parsers   # filter by suite file
 ```
 
@@ -157,6 +163,7 @@ npm test -- parsers   # filter by suite file
 | `tests/ui.test.mjs` | j/k/arrows, `u`, `?`, `/`, layered Esc, `Type UNDO`, confetti+chime, clipboard fallbacks, copy/patch exports, row semantics, focus trap, tour cancel/replay |
 | `tests/features.test.mjs` | action-aware commands, strategy cards + keys, recovery range, undo-push sequence, incident report, oversized paste, empty-state coherence |
 | `tests/integrity.test.mjs` | no CDN/network/`alert`, inlined CSS freshness, CSP present, package.json hygiene, XSS regression, size budget |
+| `tests/confirm-copy.test.mjs` | the confirm dialog describes what the button does — copy in the browser, branch/soft/restore/hard in the desktop shell — and never derives that sentence from the confirmation phrase |
 | `tests/executor.test.mjs` | the web build executes nothing; the desktop UI calls only the four registered commands with matching argument names, strategy strings and confirm phrase; `RESET` gating; refusals surfaced; no bare `--force`; no server/thread/telemetry; dependency budget |
 
 CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
@@ -237,14 +244,20 @@ Each call spawns one short-lived `git` process with `GIT_TERMINAL_PROMPT=0` and
 1. **An operation is half-finished?** merge / rebase / cherry-pick / revert / bisect → refused.
 2. **Hard reset that changes nothing?** → refused instead of pretending to work.
 3. **Hard reset without acknowledgement?** the UI makes you type `RESET` and the Rust side
-   re-checks the same phrase — the frontend cannot skip this. Two phrases, one rule: `UNDO`
-   *copies* a command, `RESET` *destructively runs* one. The dialog shows which is required, why,
-   and every surface that names a phrase (label, placeholder, hint, tour) is derived from the same
-   function, so it cannot say `UNDO` in one place and `RESET` in another.
+   re-checks the same phrase — the frontend cannot skip this. Every surface that names a phrase
+   (label, placeholder, hint, tour) is derived from the same function, so it cannot say `UNDO` in one
+   place and `RESET` in another. But the phrase is only the acknowledgement; it is *not* a description
+   of what happens, because a desktop `UNDO` still runs git. The sentence under the input is chosen
+   from the execution mode and the selected strategy, so it says "copies a command" only when the
+   page really does: a rescue branch "creates a branch, HEAD and files stay put", a soft reset "moves
+   HEAD and leaves changes staged", restore "changes file contents and refuses dirty paths", and only
+   `--hard` warns that work is discarded.
 4. **Hard reset over uncommitted tracked files?** → refused. Commit or stash first. Untracked
    files do not block (they survive a reset), and they are listed so you can see that.
 5. **Then** a `backup-before-recovery` branch is created at the pre-reset HEAD, and every
-   success response carries an `undo` line that walks you back to it.
+   success response carries an `undo` line that walks you back to it. The rescue-branch strategy is
+   the exception: it writes `rescue-<hash>` and moves nothing, so it needs no second branch — the
+   dialog says which of the two you get instead of promising a backup in every case.
 
 **The stale-backup trap.** That branch is idempotent: it is created once and never moved, so after
 a second reset it may hold last month's HEAD while its name still promises "before *this*
