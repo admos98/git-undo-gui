@@ -92,10 +92,19 @@ pub fn detect_in_progress(has_marker: impl Fn(&str) -> bool) -> Option<String> {
         .map(|(_, name)| (*name).to_string())
 }
 
+/// Is this entry something git is not tracking at all?
+pub fn is_untracked(file: &DirtyFile) -> bool {
+    matches!(file.status.as_str(), "untracked" | "ignored")
+}
+
 /// Is a dirty file something `git reset --hard` would destroy?
-/// Untracked files survive a hard reset, so they are not a blocker.
+///
+/// Untracked files are not destroyed *by the reset itself* — they have no
+/// committed version to go back to. They can still be overwritten when the
+/// target snapshot tracks the same path, which `guard` checks separately against
+/// the target tree.
 pub fn destroyed_by_hard_reset(file: &DirtyFile) -> bool {
-    !matches!(file.status.as_str(), "untracked" | "ignored")
+    !is_untracked(file)
 }
 
 #[cfg(test)]
@@ -127,8 +136,12 @@ mod tests {
     fn untracked_files_are_not_destroyed_by_hard_reset() {
         let untracked = DirtyFile { status: "untracked".into(), path: "n.md".into() };
         let modified = DirtyFile { status: "modified".into(), path: "a.ts".into() };
+        let ignored = DirtyFile { status: "ignored".into(), path: "target/".into() };
         assert!(!destroyed_by_hard_reset(&untracked));
+        assert!(!destroyed_by_hard_reset(&ignored));
         assert!(destroyed_by_hard_reset(&modified));
+        assert!(is_untracked(&untracked));
+        assert!(!is_untracked(&modified));
     }
 
     #[test]

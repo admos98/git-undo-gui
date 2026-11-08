@@ -81,6 +81,16 @@ impl Scratch {
         std::fs::write(self.path.join(name), body).expect("write file");
     }
 
+    /// Write a file, creating parent directories (needed for the file/directory
+    /// collision cases).
+    fn write_nested(&self, name: &str, body: &str) {
+        let path = self.path.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent directories");
+        }
+        std::fs::write(path, body).expect("write file");
+    }
+
     fn commit(&self, message: &str) -> String {
         self.git(&["add", "-A"]);
         self.git(&["commit", "--quiet", "-m", message]);
@@ -389,4 +399,243 @@ fn reading_state_and_reflog_works_on_a_real_repository() {
     let dirty = service::read_state(scratch.path()).expect("state");
     assert_eq!(dirty.dirty_count, 1);
     assert!(dirty.dirty.iter().any(|f| f.path == "notes.md"));
+}
+
+// ---------------------------------------------------------------------------
+// Untracked files are not automatically safe.
+//
+// `git reset --hard` writes every path the target commit tracks. When a file
+// already exists on one of those paths — untracked, therefore invisible to the
+// "uncommitted changes" list — git overwrites it, and the app used to promise it
+// would survive. The same is true of a file/directory mismatch, where git
+// deletes one side to make room for the other.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hard_reset_refuses_untracked_files_the_target_tracks() {
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("base.txt", "base\n");
+    let first = scratch.commit("first");
+    scratch.write_nested("notes.md", "committed notes\n");
+    let second = scratch.commit("second");
+
+    // Back at the first commit: notes.md exists only in the target's tree now.
+    scratch.git(&["reset", "--hard", &first]);
+    scratch.write("notes.md", "precious local work\n");
+
+    let err = service::reset(scratch.path(), &second, "hard", Some("RESET"))
+        .expect_err("must refuse to overwrite an untracked file");
+
+    assert!(matches!(err, crate::GitError::Refused { .. }), "{err:?}");
+    assert!(err.to_string().contains("notes.md"), "{err}");
+    assert_eq!(scratch.contents("notes.md"), "precious local work\n");
+    assert_eq!(scratch.head(), first, "a refusal must not move HEAD");
+    assert!(
+        !scratch.has_branch("backup-before-recovery"),
+        "a refusal must not even create the backup branch"
+    );
+}
+
+#[test]
+fn hard_reset_refuses_when_the_target_turns_an_untracked_file_into_a_directory() {
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("base.txt", "base\n");
+    let first = scratch.commit("first");
+    scratch.write_nested("docs/guide.md", "committed guide\n");
+    let second = scratch.commit("second");
+
+    scratch.git(&["reset", "--hard", &first]);
+    // An untracked *file* where the snapshot wants a *directory*: git deletes it.
+    scratch.write("docs", "precious local notes\n");
+
+    let err = service::reset(scratch.path(), &second, "hard", Some("RESET"))
+        .expect_err("must refuse a file/directory collision");
+
+    assert!(err.to_string().contains("docs"), "{err}");
+    assert_eq!(scratch.contents("docs"), "precious local notes\n");
+    assert_eq!(scratch.head(), first);
+    assert!(!scratch.has_branch("backup-before-recovery"));
+}
+
+#[test]
+fn hard_reset_refuses_when_the_target_turns_an_untracked_directory_into_a_file() {
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("base.txt", "base\n");
+    let first = scratch.commit("first");
+    scratch.write("notes.txt", "committed file\n");
+    let second = scratch.commit("second");
+
+    scratch.git(&["reset", "--hard", &first]);
+    // An untracked *directory* where the snapshot wants a *file*.
+    scratch.write_nested("notes.txt/inside.txt", "precious inside the directory\n");
+
+    let err = service::reset(scratch.path(), &second, "hard", Some("RESET"))
+        .expect_err("must refuse a directory/file collision");
+
+    assert!(err.to_string().contains("notes.txt"), "{err}");
+    assert_eq!(
+        scratch.contents("notes.txt/inside.txt"),
+        "precious inside the directory\n"
+    );
+    assert_eq!(scratch.head(), first);
+    assert!(!scratch.has_branch("backup-before-recovery"));
+}
+
+#[test]
+fn hard_reset_refuses_an_untracked_directory_the_target_writes_into() {
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("base.txt", "base\n");
+    let first = scratch.commit("first");
+    scratch.write_nested("pkg/keep.txt", "committed pkg\n");
+    let second = scratch.commit("second");
+
+    scratch.git(&["reset", "--hard", &first]);
+    // `git status` reports this as `?? pkg/`; the target tracks pkg/keep.txt.
+    scratch.write_nested("pkg/keep.txt", "precious pkg\n");
+    scratch.write_nested("pkg/other.txt", "also precious\n");
+
+    let err = service::reset(scratch.path(), &second, "hard", Some("RESET"))
+        .expect_err("must refuse to write into an untracked directory");
+
+    assert!(err.to_string().contains("pkg"), "{err}");
+    assert_eq!(scratch.contents("pkg/keep.txt"), "precious pkg\n");
+    assert_eq!(scratch.contents("pkg/other.txt"), "also precious\n");
+    assert_eq!(scratch.head(), first);
+    assert!(!scratch.has_branch("backup-before-recovery"));
+}
+
+#[test]
+fn hard_reset_leaves_unrelated_untracked_files_alone() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, _second) = two_commits(&scratch);
+
+    // Not in the target's tree, so nothing writes over it.
+    scratch.write("scratch.md", "work in progress\n");
+
+    let outcome = service::reset(scratch.path(), &first, "hard", Some("RESET"))
+        .expect("unrelated untracked files must not block a reset");
+
+    assert_eq!(scratch.contents("scratch.md"), "work in progress\n");
+    assert_eq!(scratch.head(), first);
+    assert!(
+        outcome.report.risks.iter().any(|r| r.level == "info" && r.message.contains("scratch.md")),
+        "the survivor must be named, not silently assumed: {:?}",
+        outcome.report.risks
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `restore --source` rewrites the working tree too.
+//
+// The guard used to tell the user that this strategy "keeps" uncommitted
+// changes. It does not: restore writes every path the snapshot tracks and
+// removes tracked paths it does not have, so the edits are gone and no backup
+// branch can bring them back.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn files_restore_refuses_to_erase_uncommitted_edits() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, second) = two_commits(&scratch);
+    scratch.write("notes.md", "work in progress\n");
+
+    let err = service::reset(scratch.path(), &first, "files", None)
+        .expect_err("must refuse to restore over an uncommitted edit");
+
+    assert!(err.to_string().contains("notes.md"), "{err}");
+    assert_eq!(scratch.contents("notes.md"), "work in progress\n");
+    assert_eq!(scratch.head(), second, "restore never moves HEAD, refused or not");
+    assert!(
+        !scratch.has_branch("backup-before-recovery"),
+        "a refusal must not create the backup branch"
+    );
+}
+
+#[test]
+fn files_restore_refuses_untracked_files_it_would_overwrite() {
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("base.txt", "base\n");
+    let first = scratch.commit("first");
+    scratch.write_nested("added.txt", "committed version\n");
+    let second = scratch.commit("second");
+
+    scratch.git(&["reset", "--hard", &first]);
+    // Untracked now, but `git restore --source=<second> -- .` writes it anyway.
+    scratch.write("added.txt", "precious local version\n");
+
+    let err = service::reset(scratch.path(), &second, "files", None)
+        .expect_err("must refuse an untracked collision");
+
+    assert!(err.to_string().contains("added.txt"), "{err}");
+    assert_eq!(scratch.contents("added.txt"), "precious local version\n");
+    assert!(!scratch.has_branch("backup-before-recovery"));
+}
+
+#[test]
+fn files_restore_leaves_unrelated_untracked_files_alone() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, _second) = two_commits(&scratch);
+    scratch.write("scratch.md", "not in the snapshot\n");
+
+    let outcome = service::reset(scratch.path(), &first, "files", None)
+        .expect("a clean tracked tree may be restored");
+
+    assert_eq!(scratch.contents("notes.md"), "first\n");
+    assert_eq!(scratch.contents("scratch.md"), "not in the snapshot\n");
+    assert!(
+        outcome.report.risks.iter().any(|r| r.level == "info" && r.message.contains("left alone")),
+        "the untouched file must be accounted for: {:?}",
+        outcome.report.risks
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Identity, not string equality.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resetting_to_the_current_commit_is_refused_with_a_full_or_short_hash() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (_first, second) = two_commits(&scratch);
+
+    // The full id used to slip past the no-op check because HEAD was compared as
+    // a 7-character short hash.
+    let err = service::reset(scratch.path(), &second, "hard", Some("RESET"))
+        .expect_err("a full hash of HEAD is still a no-op");
+    assert!(err.to_string().contains("already at"), "{err}");
+
+    let short = &second[..7];
+    let err = service::reset(scratch.path(), short, "hard", Some("RESET"))
+        .expect_err("a short hash of HEAD is still a no-op");
+    assert!(err.to_string().contains("already at"), "{err}");
+
+    assert_eq!(scratch.head(), second, "nothing moved");
+    assert!(
+        !scratch.has_branch("backup-before-recovery"),
+        "a no-op must not create a backup branch"
+    );
+}
+
+#[test]
+fn the_reset_report_serialises_the_field_the_ui_reads() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, _second) = two_commits(&scratch);
+
+    let outcome = service::reset(scratch.path(), &first, "hard", Some("RESET"))
+        .expect("acknowledged hard reset");
+    let json = serde_json::to_value(&outcome).expect("serialise the reset outcome");
+    let backup = json
+        .get("backup")
+        .and_then(|b| b.as_object())
+        .expect("a backup object in the response");
+
+    assert!(
+        backup.contains_key("covers_head"),
+        "the UI reads covers_head; the response has {backup:?}"
+    );
+    assert!(
+        !backup.contains_key("safe_undo"),
+        "safe_undo is not a field Rust ever sends: {backup:?}"
+    );
+    assert_eq!(backup.get("covers_head").and_then(|v| v.as_bool()), Some(true));
 }

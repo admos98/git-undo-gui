@@ -8,7 +8,7 @@
 
 use crate::git::Git;
 use git_undo_logic::error::{GitError, GitResult};
-use git_undo_logic::guard::{assess, ResetKind, Risk};
+use git_undo_logic::guard::{assess, ResetKind, Risk, TargetFacts};
 use git_undo_logic::hash::is_valid_hash;
 use git_undo_logic::state::{detect_in_progress, parse_porcelain, parse_unpushed_count, RepoState};
 use serde::Serialize;
@@ -59,7 +59,12 @@ pub struct BackupReport {
 pub fn read_state(root: &Path) -> GitResult<RepoState> {
     let git = Git::open(root)?;
 
-    let dirty = parse_porcelain(&git.run(&["status", "--porcelain=v1"]).unwrap_or_default());
+    // `core.quotepath=false` keeps non-ASCII paths unquoted, so the guard's
+    // path-overlap checks compare the real name instead of `"caf\303\251.md"`.
+    let dirty = parse_porcelain(
+        &git.run(&["-c", "core.quotepath=false", "status", "--porcelain=v1"])
+            .unwrap_or_default(),
+    );
     let dirty_count = dirty.len();
 
     let head = git
@@ -226,6 +231,21 @@ pub fn create_backup(git: &Git) -> GitResult<Backup> {
     })
 }
 
+/// Every path a snapshot tracks, recursively.
+///
+/// This is the list the working tree is rewritten from — by `reset --hard` and by
+/// `restore --source` alike. The guard intersects it with the dirty files so an
+/// untracked file on a tracked path is refused instead of silently replaced.
+fn target_tree_paths(git: &Git, rev: &str) -> GitResult<Vec<String>> {
+    // `-z` keeps paths unquoted and unambiguous; the output is NUL-separated.
+    let out = git.run(&["ls-tree", "-r", "--name-only", "-z", rev])?;
+    Ok(out
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 pub fn reset(
     root: &Path,
     target: &str,
@@ -245,9 +265,14 @@ pub fn reset(
     })?;
 
     let git = Git::open(root)?;
-    if !git.has_commit(target) {
-        return Err(GitError::UnknownCommit { hash: target.to_string() });
-    }
+
+    // Resolve both sides to full commit ids before comparing anything. `--short`
+    // HEAD against a pasted full hash never matched, so "reset to where I already
+    // am" walked past the no-op refusal, created a backup and moved nothing.
+    let target_full = git
+        .resolve_commit(target)
+        .ok_or_else(|| GitError::UnknownCommit { hash: target.to_string() })?;
+    let head_full = git.resolve_commit("HEAD").unwrap_or_default();
 
     // ---- gather ----
     let state = read_state(root)?;
@@ -255,9 +280,13 @@ pub fn reset(
         .probe(&["rev-parse", "--short", "HEAD"])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
+    // What the working tree would be rewritten from: untracked files on these
+    // paths are not safe just because git calls them untracked.
+    let target_paths = target_tree_paths(&git, &target_full)?;
+    let facts = TargetFacts { head: &head_full, target: &target_full, paths: &target_paths };
 
     // ---- guard: a refusal happens before anything is written ----
-    let risks = assess(&state, &kind, ack, &previous_head, target).map_err(GitError::refused)?;
+    let risks = assess(&state, &kind, ack, &facts).map_err(GitError::refused)?;
 
     // ---- backup first, always ----
     let backup = match kind {
