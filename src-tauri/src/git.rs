@@ -56,9 +56,17 @@ impl Git {
         run_raw(&self.root, args).ok()
     }
 
-    pub fn has_commit(&self, hash: &str) -> bool {
-        self.probe(&["cat-file", "-e", &format!("{hash}^{{commit}}")])
-            .is_some()
+    /// Resolve a revision to the **full** commit id, or `None` when it is not a
+    /// commit in this repository.
+    ///
+    /// Full ids are what make identity comparisons honest: `git rev-parse --short`
+    /// produced `a43c821`, and comparing that to a pasted 40-char hash said
+    /// "different commit" for the very same commit. Callers validate the input
+    /// first (`hash::is_valid_hash`), so this only ever sees hex.
+    pub fn resolve_commit(&self, rev: &str) -> Option<String> {
+        self.probe(&["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")])
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     /// Short, human name of the current branch, or `HEAD` when detached.

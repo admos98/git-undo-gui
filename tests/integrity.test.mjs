@@ -94,9 +94,12 @@ suite.test("no user data is ever uploaded or echoed into a script sink", async (
   return injected === 0 && !app("window.__pwned") && !app("window.__pwned2") || "markup from user input executed";
 });
 
+// The ceiling grew from 200 KB when the patch export started preserving the
+// original git patch and the desktop bridge gained its safety reporting; the
+// README claim and badge below still have to match the real file exactly.
 suite.test("artifact stays under the promised size budget", () => {
   const kb = statSync(INDEX_PATH).size / 1024;
-  return kb < 200 || `index.html is ${kb.toFixed(0)} KB`;
+  return kb < 210 || `index.html is ${kb.toFixed(0)} KB`;
 });
 
 // The v1 bug this repo keeps re-learning: a number in a badge that nobody
