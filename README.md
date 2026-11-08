@@ -11,7 +11,8 @@ is recoverable — but at 2am you are reading forty hashes and guessing, and tha
 mistake happens. This turns the reflog into a timeline you can read, and hands you the one command
 that puts things back.
 
-<!-- Record the 15-second tour (open index.html, press t) and save it as docs/demo.gif, then uncomment: ![git-undo-gui demo](docs/demo.gif) -->
+![git-undo-gui demo](docs/demo.gif)
+![git-undo-gui screenshot](docs/screenshot.png)
 
 ## Try it
 
@@ -81,7 +82,7 @@ branch creation `switch -c` — not a blind reset for all three.
 
 ## Keyboard
 
-`j`/`k` move · `/` search · `1`–`4` strategy · `u` undo plan · `d` diff · `r` report · `t` tour ·
+`j`/`k` move · `/` search · `1`–`4` strategy · `u` undo plan · `d` patch · `r` report · `t` tour ·
 `?` help · `Esc` close — full feature list, import formats and implementation notes:
 [docs/GUIDE.md](docs/GUIDE.md).
 
