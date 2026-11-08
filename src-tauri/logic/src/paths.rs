@@ -32,10 +32,10 @@ pub fn collides(disk_path: &str, tree_path: &str) -> bool {
 
     let disk_contains_tree = tree
         .strip_prefix(disk)
-        .map_or(false, |rest| rest.starts_with('/'));
+        .is_some_and(|rest| rest.starts_with('/'));
     let tree_contains_disk = disk
         .strip_prefix(tree)
-        .map_or(false, |rest| rest.starts_with('/'));
+        .is_some_and(|rest| rest.starts_with('/'));
 
     disk == tree || disk_contains_tree || tree_contains_disk
 }
