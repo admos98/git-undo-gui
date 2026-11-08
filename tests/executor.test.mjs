@@ -73,8 +73,14 @@ function defaultResponse(cmd) {
   }
   if (cmd === "git_reset") {
     return {
+      ok: true,
+      // performDesktopReset renders outcome.message and outcome.now_at, so a
+      // shape missing them renders "undefined" — which used to hide here because
+      // no test read the box after a soft reset.
       message: "Moved main to 9f2c114 (soft).",
       now_at: "9f2c114",
+      previous_head: "a43c821",
+      command: "git reset --soft 9f2c114",
       backup_branch: "backup-before-recovery",
       undo: "git reset --soft a43c821",
       risks: [],
@@ -131,8 +137,14 @@ suite.test("the UI only claims to execute when it can", async () => {
   await h.app("loadRepository('/home/dev/project')");
   const after = h.d.querySelector("#undo-outcome span:last-child").textContent;
   const afterNote = h.d.getElementById("demo-mode-note").textContent;
-  if (!/runs the reset/.test(after)) return `desktop, repo open, claims: ${after}`;
-  if (!/backup-before-recovery/.test(afterNote)) return `backup not promised: ${afterNote}`;
+  if (!/runs the chosen strategy/.test(after)) return `desktop, repo open, claims: ${after}`;
+  // The note must describe the *selected* strategy. Promising a backup for all
+  // of them was the bug this pins: rescue-branch never takes one.
+  if (/backup-before-recovery/.test(afterNote)) return `desktop note promises a backup branch: ${afterNote}`;
+  if (!/rescue branch/.test(afterNote)) return `desktop note does not describe the rescue branch: ${afterNote}`;
+  h.app("updateStrategy('soft')");
+  const softNote = h.d.getElementById("demo-mode-note").textContent;
+  if (!/staged/.test(softNote)) return `desktop note does not describe a soft reset: ${softNote}`;
   return true;
 });
 
@@ -221,7 +233,9 @@ suite.test("every surface that names the phrase names the right one", async () =
   let seen = snapshot();
   if (seen.placeholder !== "Type UNDO") problems.push(`soft placeholder: ${seen.placeholder}`);
   if (seen.label !== "UNDO") problems.push(`soft label: ${seen.label}`);
-  if (!/copies a command/i.test(seen.why)) problems.push(`soft explanation: ${seen.why}`);
+  // Desktop soft reset runs git, so it must not claim to copy anything.
+  if (/copies a command/i.test(seen.why)) problems.push(`soft explanation still says it copies: ${seen.why}`);
+  if (!/reset --soft/.test(seen.why)) problems.push(`soft explanation: ${seen.why}`);
 
   // Switching to hard must repaint everything, not just the label.
   h.app("updateStrategy('hard')");
