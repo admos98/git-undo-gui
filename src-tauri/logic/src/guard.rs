@@ -85,9 +85,21 @@ pub fn assess(
     // 2. Resetting to where you already are is a no-op; say so instead of doing it.
     //    Both ids are full commit ids, so a short hash, a full hash and HEAD all
     //    compare equal when they are the same commit.
-    if kind.is_destructive() && !facts.head.is_empty() && facts.head == facts.target {
+    //
+    //    This applies to every strategy that would otherwise move something. The
+    //    rescue branch is exempt because `git branch rescue-<hash>` at HEAD is a
+    //    useful thing to ask for, not a no-op. `files` is exempt while the tree is
+    //    dirty, because restoring HEAD over local edits does change something —
+    //    that intent is judged by the discard rules below.
+    let nothing_to_do = match kind {
+        ResetKind::Branch => false,
+        ResetKind::Hard | ResetKind::Soft => true,
+        ResetKind::Files => !state.is_dirty(),
+    };
+    if nothing_to_do && !facts.head.is_empty() && facts.head == facts.target {
         return Err(format!(
-            "HEAD is already at {} — there is nothing to move.",
+            "{} is already at {} — there is nothing to change.",
+            if matches!(kind, ResetKind::Files) { "Your working tree" } else { "HEAD" },
             short_id(facts.target)
         ));
     }
@@ -103,8 +115,9 @@ pub fn assess(
         }
     }
 
-    // 4. Losing unpushed commits is the scenario this whole app exists for, so it is
-    //    a refusal on --hard unless the user was told and acknowledged.
+    // 4. Losing unpushed commits is the scenario this whole app exists for. It is not
+    //    a refusal — the backup branch created just before the reset holds them, so
+    //    they stay recoverable — but the user has to be told what happened to them.
     if kind.is_destructive() && !state.unpushed.is_empty() {
         risks.push(Risk {
             level: "danger",
@@ -515,6 +528,47 @@ mod tests {
                 .unwrap_err();
         assert!(err.contains("already at"), "{err}");
         assert!(err.contains("a43c821"), "{err}");
+    }
+
+    #[test]
+    fn no_op_soft_resets_are_refused_too() {
+        // Soft used to slip through and create a backup branch for a reset that
+        // could not change anything.
+        let full = "a43c821aa11bb22cc33dd44ee55ff66aa77bb88";
+        let no_paths: Vec<String> = vec![];
+        let err = assess(&clean(), &ResetKind::Soft, None, &bare(full, full, &no_paths))
+            .unwrap_err();
+        assert!(err.contains("already at"), "{err}");
+    }
+
+    #[test]
+    fn a_rescue_branch_at_head_is_still_allowed() {
+        // `git branch rescue-<hash>` at HEAD is a legitimate thing to ask for.
+        let full = "a43c821aa11bb22cc33dd44ee55ff66aa77bb88";
+        let no_paths: Vec<String> = vec![];
+        assert!(assess(&clean(), &ResetKind::Branch, None, &bare(full, full, &no_paths)).is_ok());
+    }
+
+    #[test]
+    fn restoring_head_onto_local_edits_is_not_treated_as_a_no_op() {
+        // The tree is dirty, so `git restore --source=HEAD -- .` really would erase
+        // something. The refusal must be about the edits, not about a no-op.
+        let full = "a43c821aa11bb22cc33dd44ee55ff66aa77bb88";
+        let paths = tree(&["src/a.ts"]);
+        let err = assess(&dirty(), &ResetKind::Files, None, &bare(full, full, &paths))
+            .unwrap_err();
+        assert!(!err.contains("nothing to change"), "wrong refusal: {err}");
+        assert!(err.contains("src/a.ts"), "{err}");
+        assert!(err.contains("uncommitted"), "{err}");
+    }
+
+    #[test]
+    fn restoring_head_onto_a_clean_tree_is_refused_as_a_no_op() {
+        let full = "a43c821aa11bb22cc33dd44ee55ff66aa77bb88";
+        let no_paths: Vec<String> = vec![];
+        let err = assess(&clean(), &ResetKind::Files, None, &bare(full, full, &no_paths))
+            .unwrap_err();
+        assert!(err.contains("nothing to change"), "{err}");
     }
 
     #[test]

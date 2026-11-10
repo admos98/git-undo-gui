@@ -16,6 +16,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { boot, createSuite, ROOT, wait } from "./harness.mjs";
+import { matchesInlineCss } from "./css-equivalence.mjs";
 
 const SEEN = { "git-undo-seen": "1", "git-undo-tour-seen": "1" };
 const REFLOG = [
@@ -394,7 +395,12 @@ suite.test("the embedded copy is generated, not committed", async () => {
   if (existsSync(embeddedPath)) {
     const source = readFileSync(resolve(ROOT, "index.html"), "utf8");
     const embedded = readFileSync(embeddedPath, "utf8");
-    if (embedded !== source) {
+    // Byte equality is the wrong test across platforms: Tailwind's native build
+    // rounds OKLab channels differently on Windows and Linux (e.g. -.0133505 vs
+    // -.0133506), so a Windows contributor saw this fail forever with an
+    // instruction (`npm run embed:web`) that cannot fix it. Compare the CSS the
+    // same way integrity.test.mjs already does, and everything else exactly.
+    if (!matchesInlineCss(embedded, source)) {
       return "the generated copy is stale — run `npm run embed:web` (a build does this automatically)";
     }
   }

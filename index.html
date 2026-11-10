@@ -1590,6 +1590,44 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
     }
 
     /**
+     * Split the inside of `HEAD@{...}` into a reflog index and a human age.
+     *
+     * `git reflog` writes the date inside the braces when `--date` is passed, in
+     * three shapes:
+     *   "0"                                  plain index
+     *   "0, 2 days ago"                      index + age (git's own default)
+     *   "2 days ago"                         --date=relative
+     *   "2026-11-06 10:22:13 +0100"          --date=iso
+     *   "Fri Nov 6 10:22:13 2026 +0100"      --date=default
+     *
+     * Returns `{ index, age }`: `index` is the number to put back in `HEAD@{...}`
+     * (null when git only gave a date), `age` is what a human should read. A pure
+     * date is turned into "Nm ago" by relativeFromGitDate, which never throws.
+     */
+    function splitReflogDate(raw) {
+      const value = String(raw || "").trim();
+      if (/^\d+$/.test(value)) return { index: value, age: "" };
+
+      const comma = value.indexOf(",");
+      if (comma > -1) {
+        const head = value.slice(0, comma).trim();
+        return {
+          index: /^\d+$/.test(head) ? head : null,
+          age: value.slice(comma + 1).trim()
+        };
+      }
+
+      // A bare age: "2 days ago", "3 weeks ago". Anything with a digit and a
+      // unit word is relative, not a timestamp.
+      if (/\bago\b/i.test(value) || /^\d+\s+\w+$/i.test(value)) {
+        return { index: null, age: value };
+      }
+
+      // Otherwise it is a timestamp; let the existing date helper say how old.
+      return { index: null, age: relativeFromGitDate(value) };
+    }
+
+    /**
      * Parse raw `git reflog` (or `git reflog --date=iso`) output.
      * Returns { entries, matched, unmatched } so the UI can report honestly
      * instead of silently inventing data for lines it could not read.
@@ -1613,10 +1651,20 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
 
         const hash = match[1];
         const decoration = (match[2] || "").trim();   // "HEAD -> main, origin/main"
-        const refNum = match[3].trim();               // "0" or "0, 2 days ago"
+        const refNum = match[3].trim();               // "0", "0, 2 days ago", "2 days ago", or an ISO stamp
         const payload = match[4] || "";
         const parts = splitReflogPayload(payload);
         const cls = classifyReflogAction(parts.actionWord, parts.details);
+
+        // `git reflog --date=...` puts the date *inside* the braces, in three
+        // different shapes. Showing a raw timestamp there was wrong on every
+        // desktop row, so split it into an index (for the id) and a human age.
+        const when = splitReflogDate(refNum);
+        // git itself writes `HEAD@{2 days ago}` for --date=relative, so a relative
+        // age is an authentic selector; a raw timestamp is not (and is unreadable).
+        const refLabel = when.index !== null
+          ? when.index
+          : (when.age && when.age !== "imported" ? when.age : refNum);
 
         // Preserve the user's data verbatim: the "diff" is the raw reflog line,
         // never a randomly generated fake patch.
@@ -1625,12 +1673,12 @@ e17b3d9 HEAD@{1}: commit: feat(auth): add PKCE verification
         entries.push({
           id: `import-${idx}-${hash}`,
           hash: hash,
-          ref: `HEAD@{${refNum}}`,
+          ref: `HEAD@{${refLabel}}`,
           action: payload.trim() || "(no message)",
           actionType: cls.actionType,
           typeBadge: cls.typeBadge,
           branch: decoration || "(no branch decoration)",
-          timeAgo: refNum.indexOf(",") > -1 ? refNum.split(",").slice(1).join(",").trim() : "imported",
+          timeAgo: when.age || "imported",
           author: "Your local git user",
           fullMsg: parts.details || payload.trim() || "(no message)",
           source: "imported",

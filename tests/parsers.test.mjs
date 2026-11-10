@@ -80,6 +80,42 @@ suite.test("reflog: --date=iso variant parses", () => {
   return r.matched === 1 && r.entries[0].action === "commit: fix" || "failed";
 });
 
+suite.test("reflog: an ISO stamp is never shown as the reflog id", () => {
+  // `git reflog --date=iso` puts the timestamp inside the braces. Rendering it as
+  // the id made every desktop row read `HEAD@{2026-11-06 10:22:13 +0100}`, which
+  // is not a selector anyone can paste back into git.
+  const r = parse("a43c821 HEAD@{2026-11-06 10:22:13 +0100}: commit: fix");
+  const e = r.entries[0];
+  if (e.ref.includes("20")) return `ref still holds the timestamp: ${e.ref}`;
+  if (!e.ref.startsWith("HEAD@{")) return `unexpected ref ${e.ref}`;
+  if (e.timeAgo === "imported" || !e.timeAgo) return `the age was dropped: ${e.timeAgo}`;
+  return true;
+});
+
+suite.test("reflog: --date=relative keeps the selector and the age", () => {
+  // git writes the age *inside* the braces for --date=relative, and that string
+  // is resolvable (`git rev-parse 'HEAD@{1 second ago}'` works), so it is kept
+  // verbatim rather than being replaced with an invented number.
+  const r = parse("a43c821 HEAD@{0 seconds ago}: commit: c2");
+  const e = r.entries[0];
+  return e.ref === "HEAD@{0 seconds ago}" && e.timeAgo === "0 seconds ago"
+    || `ref=${e.ref} timeAgo=${e.timeAgo}`;
+});
+
+suite.test("reflog: the index+age form still splits correctly", () => {
+  const r = parse("a43c821 HEAD@{3, 2 days ago}: commit: c1");
+  const e = r.entries[0];
+  return e.ref === "HEAD@{3}" && e.timeAgo === "2 days ago"
+    || `ref=${e.ref} timeAgo=${e.timeAgo}`;
+});
+
+suite.test("reflog: a plain index keeps the legacy 'imported' age", () => {
+  const r = parse("a43c821 HEAD@{5}: commit: c1");
+  const e = r.entries[0];
+  return e.ref === "HEAD@{5}" && e.timeAgo === "imported"
+    || `ref=${e.ref} timeAgo=${e.timeAgo}`;
+});
+
 suite.test("reflog: 6-8 char abbreviated hashes parse", () => {
   const r = parse("a43c82 HEAD@{1}: commit: short hash");
   return r.matched === 1 || "6-char hash rejected";

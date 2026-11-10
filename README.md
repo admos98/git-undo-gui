@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
-[![Bundle size](https://img.shields.io/badge/index.html-204%20KB%20raw%20%C2%B7%2051%20KB%20gzip-7dcfff)](index.html)
+[![Bundle size](https://img.shields.io/badge/index.html-207%20KB%20raw%20%C2%B7%2051%20KB%20gzip-7dcfff)](index.html)
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
@@ -123,7 +123,7 @@ A backup branch keeps unpushed commits alive, but not on your branch — a safet
 machine, and no replacement for reading what you are about to run. The rescue-branch strategy creates
 `rescue-<hash>` instead and takes no backup, because nothing moves that would need one.
 
-One file of 204 KB raw in total is a deliberate tradeoff: no build step, no dependency to audit, no
+One file of 207 KB raw in total is a deliberate tradeoff: no build step, no dependency to audit, no
 bundle to trust — and 3,700 lines in one place, which the jsdom suite makes safe to keep and does
 not make pleasant to review.
 

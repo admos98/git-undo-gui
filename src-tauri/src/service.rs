@@ -10,7 +10,9 @@ use crate::git::Git;
 use git_undo_logic::error::{GitError, GitResult};
 use git_undo_logic::guard::{assess, ResetKind, Risk, TargetFacts};
 use git_undo_logic::hash::is_valid_hash;
-use git_undo_logic::state::{detect_in_progress, parse_porcelain, parse_unpushed_count, RepoState};
+use git_undo_logic::state::{
+    detect_in_progress, parse_porcelain_z, parse_unpushed_count, unpushed_rev_list_args, RepoState,
+};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -56,14 +58,24 @@ pub struct BackupReport {
 }
 
 /// Read everything the UI needs. Read-only: safe to call on every keystroke.
+///
+/// A failure to read the working tree is reported, never smoothed over into
+/// "clean". `git status` failing (a corrupt `.git/index`, say) used to yield an
+/// empty dirty list, which would let a reset past the guard with `dirty_count`
+/// of zero and quietly drop the warning that uncommitted work survives a
+/// `--soft`. Today git also refuses the reset itself, but that is git's luck,
+/// not this function's promise.
 pub fn read_state(root: &Path) -> GitResult<RepoState> {
     let git = Git::open(root)?;
 
-    // `core.quotepath=false` keeps non-ASCII paths unquoted, so the guard's
-    // path-overlap checks compare the real name instead of `"caf\303\251.md"`.
-    let dirty = parse_porcelain(
-        &git.run(&["-c", "core.quotepath=false", "status", "--porcelain=v1"])
-            .unwrap_or_default(),
+    // `-z` keeps every path literal: spaces, quotes and non-ASCII bytes are not
+    // C-quoted, so the guard compares the same spelling `ls-tree -z` gave it.
+    // `core.quotepath=false` is kept for the diff/log callers and is harmless.
+    let dirty = parse_porcelain_z(
+        &git.run(&["-c", "core.quotepath=false", "status", "--porcelain=v1", "-z"])
+            .map_err(|detail| GitError::Internal {
+                detail: format!("`git status` failed, so the working tree could not be read: {detail}"),
+            })?,
     );
     let dirty_count = dirty.len();
 
@@ -74,11 +86,13 @@ pub fn read_state(root: &Path) -> GitResult<RepoState> {
 
     let branch = git.current_branch();
 
-    // Unpushed commits: compare against the configured upstream. No upstream means
-    // we cannot know, and we must not imply "nothing to lose".
-    let unpushed = match git.probe(&["rev-list", "--count", "@{upstream}..HEAD"]) {
+    // Unpushed commits: `HEAD --not --remotes` rather than `@{upstream}..HEAD`,
+    // because a branch with no upstream used to answer `fatal: no upstream
+    // configured` — and that is a fresh local branch, the one case where a hard
+    // reset destroys the only copy. The two forms agree once an upstream exists.
+    let unpushed = match git.probe(&unpushed_rev_list_args()) {
         Some(count) if parse_unpushed_count(&count).unwrap_or(0) > 0 => git
-            .probe(&["rev-list", "--max-count=50", "--abbrev-commit", "@{upstream}..HEAD"])
+            .probe(&["rev-list", "--max-count=50", "--abbrev-commit", "HEAD", "--not", "--remotes"])
             .map(|out| out.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
             .unwrap_or_default(),
         _ => Vec::new(),
@@ -156,7 +170,14 @@ pub fn read_reflog(root: &Path, limit: usize) -> GitResult<String> {
     let git = Git::open(root)?;
     let limit = limit.clamp(1, 500).to_string();
     // Same format the web build parses, so the timeline code is shared.
-    git.run(&["reflog", "show", &format!("-{limit}"), "--date=iso", "--format=%h %gd: %gs"])
+    //
+    // `--date=relative`, not `iso`: with `iso`, `%gd` expands to
+    // `HEAD@{2026-11-10 21:27:49 +0330}` and every row showed that string as its
+    // reflog id, while `timeAgo` fell through to "imported" because there is no
+    // comma to split on. Relative keeps the human part ("2 days ago") inside the
+    // braces, which the browser parser already understands, and the selector stays
+    // resolvable by git.
+    git.run(&["reflog", "show", &format!("-{limit}"), "--date=relative", "--format=%h %gd: %gs"])
 }
 
 /// What a backup branch actually is — not just whether we created one.
@@ -246,6 +267,48 @@ fn target_tree_paths(git: &Git, rev: &str) -> GitResult<Vec<String>> {
         .collect())
 }
 
+/// The command that puts things back, phrased for the strategy that just ran.
+///
+/// Two rules, both learned from the failure modes:
+///
+/// * A stale backup branch is not a way back. Following it rewinds to whenever it
+///   was made, discarding everything since, so the target is the pre-reset commit
+///   and the branch is named with its date as something to inspect.
+/// * Only `--hard` restores "everything". A soft reset moves HEAD and leaves the
+///   working tree alone, so undoing it must also leave the working tree alone —
+///   `git reset --soft <previous_head>` puts the commits back and keeps the staged
+///   edits that survived. Offering `--hard` there deleted the very work the guard
+///   had just promised would stay in place.
+///
+/// The files strategy only ever rewrites the working tree, so its undo is the
+/// same strategy pointed at the pre-reset commit: history never moved.
+fn undo_hint(kind: &ResetKind, backup: &Option<Backup>, previous_head: &str) -> Option<String> {
+    match kind {
+        // Nothing moved, so there is nothing to undo.
+        ResetKind::Branch => None,
+        ResetKind::Soft => Some(format!(
+            "git reset --soft {previous_head}   # puts HEAD back and keeps the changes staged — \
+             verify with `git status`"
+        )),
+        ResetKind::Files => Some(format!(
+            "git restore --source={previous_head} -- .   # rewrites the files back; commit history \
+             never moved"
+        )),
+        ResetKind::Hard => match backup {
+            Some(b) if b.is_safe_undo() => Some(format!(
+                "git reset --hard {}   # restores exactly the state you were in a moment ago",
+                b.branch
+            )),
+            Some(b) => Some(format!(
+                "git reset --hard {previous_head}   # undo this reset ({} is older, from {} — \
+                 inspect with `git log {}`)",
+                b.branch, b.date, b.branch
+            )),
+            None => Some(format!("git reset --hard {previous_head}   # undo this reset")),
+        },
+    }
+}
+
 pub fn reset(
     root: &Path,
     target: &str,
@@ -328,21 +391,12 @@ pub fn reset(
     };
 
     // The undo hint has to be safe to follow blindly, because that is what people
-    // do with an undo. A stale backup branch is NOT one — following it would jump
-    // back to whenever it was made, discarding everything since. So in that case
-    // the way back is the pre-reset commit itself, and the stale branch is
-    // mentioned as something to inspect rather than something to reset to.
-    let undo = match &backup {
-        Some(b) if b.is_safe_undo() => Some(format!(
-            "git reset --hard {}   # restores exactly the state you were in a moment ago",
-            b.branch
-        )),
-        Some(b) => Some(format!(
-            "git reset --hard {previous_head}   # undo this reset ({} is older, from {} — inspect with `git log {}`)",
-            b.branch, b.date, b.branch
-        )),
-        None => None,
-    };
+    // do with an undo. That is a per-strategy statement, not one sentence with a
+    // hash in it: a `--hard` back to the backup branch restores commits, and a
+    // soft reset had left uncommitted work in the working tree that the guard
+    // promised would stay there. Running `--hard` on it would delete exactly the
+    // work the dialog said was safe.
+    let undo = undo_hint(&kind, &backup, &previous_head);
 
     Ok(ResetOutcome {
         report: OpReport {

@@ -52,6 +52,13 @@ impl Scratch {
             ("user.name", "Undo Test"),
             ("user.email", "test@example.invalid"),
             ("commit.gpgsign", "false"),
+            // Byte-exact checkouts. Without this a Windows developer with
+            // `core.autocrlf=true` gets `\r\n` back from git and every assertion on
+            // file contents fails — three tests failed here for months' worth of
+            // reasons before being pinned. CI is Linux and never saw it.
+            ("core.autocrlf", "false"),
+            ("core.eol", "lf"),
+            ("core.safecrlf", "false"),
         ] {
             self.git(&["config", key, value]);
         }
@@ -613,6 +620,245 @@ fn resetting_to_the_current_commit_is_refused_with_a_full_or_short_hash() {
     assert!(
         !scratch.has_branch("backup-before-recovery"),
         "a no-op must not create a backup branch"
+    );
+}
+
+#[test]
+fn a_soft_no_op_is_refused_before_a_backup_branch_is_created() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (_first, second) = two_commits(&scratch);
+
+    let err = service::reset(scratch.path(), &second, "soft", None)
+        .expect_err("soft reset to HEAD cannot change anything");
+    assert!(err.to_string().contains("already at"), "{err}");
+    assert!(
+        !scratch.has_branch("backup-before-recovery"),
+        "a refused no-op must not leave a branch behind"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Undo hints must undo the operation that actually ran.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_undo_after_a_soft_reset_keeps_the_work_that_survived_it() {
+    // The reported bug: soft reset leaves uncommitted work in the tree (the guard
+    // says so), but the undo hint was `git reset --hard backup-before-recovery`.
+    // Following it deleted the work the dialog had just promised to keep.
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, second) = two_commits(&scratch);
+
+    // Uncommitted work on top of the second commit: it survives `--soft`.
+    scratch.write("notes.md", "second\nprecious wip\n");
+    assert_eq!(scratch.head(), second);
+
+    let outcome = service::reset(scratch.path(), &first, "soft", None).expect("soft reset");
+    assert_eq!(scratch.head(), first, "HEAD moved to the snapshot");
+    assert!(
+        scratch.contents("notes.md").contains("precious wip"),
+        "a soft reset must not touch the working tree"
+    );
+
+    let undo = outcome.report.undo.expect("an undo hint");
+    assert!(
+        undo.contains("reset --soft"),
+        "the undo for a soft reset must also be soft, else it deletes the work: {undo}"
+    );
+    assert!(
+        !undo.contains("--hard"),
+        "a --hard undo would erase the uncommitted work a soft reset kept: {undo}"
+    );
+    assert!(
+        undo.contains(&second[..7]),
+        "the undo must target the pre-reset commit: {undo}"
+    );
+
+    // And the hint must actually work when followed.
+    scratch.git(&["reset", "--soft", &second]);
+    assert_eq!(scratch.head(), second, "the offered undo puts HEAD back");
+    assert!(
+        scratch.contents("notes.md").contains("precious wip"),
+        "and it leaves the uncommitted work alone"
+    );
+}
+
+#[test]
+fn the_undo_after_a_file_restore_does_not_move_history() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, second) = two_commits(&scratch);
+
+    let outcome = service::reset(scratch.path(), &first, "files", None).expect("restore files");
+    assert_eq!(scratch.contents("notes.md"), "first\n");
+
+    let undo = outcome.report.undo.expect("an undo hint");
+    assert!(undo.contains("restore --source"), "files undo must be a restore: {undo}");
+    assert!(!undo.contains("reset --hard"), "history never moved, so do not rewrite it: {undo}");
+    assert!(undo.contains(&second[..7]), "undo targets the pre-reset commit: {undo}");
+}
+
+#[test]
+fn the_rescue_branch_strategy_offers_no_undo_because_nothing_moved() {
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, _second) = two_commits(&scratch);
+
+    let outcome = service::reset(scratch.path(), &first, "branch", None).expect("rescue branch");
+    assert!(
+        outcome.report.undo.is_none(),
+        "nothing moved, so there is nothing to undo: {:?}",
+        outcome.report.undo
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Untracked work is protected regardless of what the filename contains.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hard_reset_refuses_untracked_work_whose_name_contains_a_space() {
+    // The data-loss bug this test exists for: `git status --porcelain` C-quotes
+    // such paths, so the guard compared `"my notes.md"` against a snapshot path of
+    // `my notes.md`, saw no collision, and allowed the reset. git then overwrote
+    // the untracked file. Reading status with `-z` closes it.
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("my notes.md", "committed\n");
+    let first = scratch.commit("first");
+    scratch.git(&["rm", "--quiet", "my notes.md"]);
+    let second = scratch.commit("delete it");
+
+    // Untracked now, with the same name the first snapshot tracks.
+    scratch.write("my notes.md", "PRECIOUS UNTRACKED WORK\n");
+
+    let err = service::reset(scratch.path(), &first, "hard", Some("RESET"))
+        .expect_err("an untracked file on a tracked path must be refused");
+
+    assert!(err.to_string().contains("my notes.md"), "{err}");
+    assert!(
+        err.to_string().contains("untracked"),
+        "the refusal must say what kind of file it is: {err}"
+    );
+    assert_eq!(
+        scratch.contents("my notes.md"),
+        "PRECIOUS UNTRACKED WORK\n",
+        "the untracked work must still be on disk"
+    );
+    assert_eq!(scratch.head(), second, "a refusal must not move HEAD");
+}
+
+#[test]
+fn file_restore_refuses_untracked_work_whose_name_contains_a_space() {
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("my notes.md", "committed\n");
+    let first = scratch.commit("first");
+    scratch.git(&["rm", "--quiet", "my notes.md"]);
+    scratch.commit("delete it");
+
+    scratch.write("my notes.md", "PRECIOUS UNTRACKED WORK\n");
+
+    let err = service::reset(scratch.path(), &first, "files", None)
+        .expect_err("restore would overwrite it, so refuse");
+    assert!(err.to_string().contains("my notes.md"), "{err}");
+    assert_eq!(scratch.contents("my notes.md"), "PRECIOUS UNTRACKED WORK\n");
+}
+
+// ---------------------------------------------------------------------------
+// The repository state read has to be honest about what it could not read.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_corrupt_index_is_reported_instead_of_looking_clean() {
+    // `run(...).unwrap_or_default()` turned a failed `git status` into an empty
+    // dirty list: the guard then believed the tree was clean.
+    let Some(scratch) = Scratch::new() else { return };
+    two_commits(&scratch);
+    scratch.write("notes.md", "uncommitted\n");
+    scratch.write(".git/index", "not an index file");
+
+    let err = service::read_state(scratch.path())
+        .expect_err("a failed status read must not be reported as a clean tree");
+    let message = err.to_string();
+    assert!(
+        message.contains("could not be read") || message.contains("index"),
+        "the error must say what failed: {message}"
+    );
+}
+
+#[test]
+fn unpushed_commits_are_reported_on_a_branch_with_no_upstream() {
+    // The headline scenario: a local-only branch. `@{upstream}..HEAD` failed with
+    // "no upstream configured", so the app reported zero unpushed commits.
+    let Some(scratch) = Scratch::new() else { return };
+    let (_first, _second) = two_commits(&scratch);
+
+    let state = service::read_state(scratch.path()).expect("read state");
+    assert!(
+        !state.unpushed.is_empty(),
+        "a two-commit branch that was never pushed has unpushed commits"
+    );
+    assert_eq!(state.unpushed.len(), 2, "both commits are local-only: {:?}", state.unpushed);
+
+    // And they must be surfaced as a risk on a hard reset, not silently dropped.
+    let outcome = service::reset(scratch.path(), &_first, "hard", Some("RESET"))
+        .expect("the backup branch makes this recoverable");
+    assert!(
+        outcome.report.risks.iter().any(|r| r.level == "danger" && r.message.contains("unpushed")),
+        "the user must be told those commits left the branch: {:?}",
+        outcome.report.risks
+    );
+}
+
+#[test]
+fn unpushed_commits_drop_to_zero_once_the_branch_is_pushed() {
+    let Some(scratch) = Scratch::new() else { return };
+    two_commits(&scratch);
+
+    // A bare remote, pushed.
+    let remote = scratch.path().join("remote.git");
+    let bare = Command::new("git")
+        .args(["init", "--quiet", "--bare", remote.to_str().expect("utf8 path")])
+        .output()
+        .expect("git init --bare");
+    assert!(bare.status.success(), "{}", String::from_utf8_lossy(&bare.stderr));
+
+    scratch.git(&["remote", "add", "origin", remote.to_str().expect("utf8 path")]);
+    scratch.git(&["push", "--quiet", "-u", "origin", "main"]);
+
+    let state = service::read_state(scratch.path()).expect("read state");
+    assert!(state.unpushed.is_empty(), "everything is on the remote: {:?}", state.unpushed);
+}
+
+// ---------------------------------------------------------------------------
+// The reflog the desktop reads has to be parseable by the shared UI code.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_reflog_read_uses_selectors_the_ui_can_parse() {
+    let Some(scratch) = Scratch::new() else { return };
+    two_commits(&scratch);
+
+    let reflog = service::read_reflog(scratch.path(), 10).expect("reflog");
+    let first_line = reflog.lines().next().expect("a reflog line");
+    assert!(
+        first_line.contains("HEAD@{"),
+        "expected the %gd selector to survive: {first_line}"
+    );
+    assert!(
+        !first_line.contains("HEAD@{20"),
+        "a raw ISO stamp in the braces is not a reflog id: {first_line}"
+    );
+    // With --date=relative the braces hold "0" or "0, N seconds ago" / "N seconds ago".
+    let inside = first_line
+        .split("HEAD@{")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("braced selector");
+    assert!(
+        inside.trim_start().starts_with('0') || inside.trim_start().chars().next().is_some_and(|c| c.is_ascii_digit()),
+        "expected a reflog index or a relative age, got {inside:?}"
+    );
+    assert!(
+        !inside.contains(':') || !inside.contains('-'),
+        "an ISO timestamp leaked into the selector: {inside:?}"
     );
 }
 
