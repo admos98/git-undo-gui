@@ -47,11 +47,18 @@ impl ResetKind {
 /// no-op refusal: `a43c821` and its 40-char id are the same commit and were not
 /// equal as strings. `paths` is every path the target snapshot tracks, which is
 /// exactly what the working tree will be rewritten from.
-#[derive(Debug, Clone, Copy)]
+///
+/// `snapshot` is the commit id of a rescue snapshot the caller already wrote
+/// holding the working-tree content the reset is about to discard. A guard that
+/// refuses unconditionally is safe but useless when a snapshot exists: the two
+/// rules that protect uncommitted work become warnings that hand back the exact
+/// command that restores it. `None` means nothing was captured, so they refuse.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TargetFacts<'a> {
     pub head: &'a str,
     pub target: &'a str,
     pub paths: &'a [String],
+    pub snapshot: Option<&'a str>,
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize))]
@@ -130,7 +137,9 @@ pub fn assess(
     }
 
     // 5. Uncommitted work in tracked files is irrecoverable after --hard (git has no
-    //    record of it, and a backup branch only holds commits).
+    //    record of it, and a backup branch only holds commits) — unless the caller
+    //    wrote a rescue snapshot first, in which case the work is recoverable and
+    //    the honest thing is to say how rather than to refuse.
     let destroyed: Vec<&str> = state
         .dirty
         .iter()
@@ -138,18 +147,34 @@ pub fn assess(
         .map(|f| f.path.as_str())
         .collect();
     if kind.is_destructive() && !destroyed.is_empty() {
-        return Err(format!(
-            "{} file(s) have uncommitted changes that no backup can restore ({}). Commit them, \
-             stash them (`git stash -u`), or choose the rescue-branch strategy.",
-            destroyed.len(),
-            list(&destroyed)
-        ));
+        match facts.snapshot {
+            None => {
+                return Err(format!(
+                    "{} file(s) have uncommitted changes that no backup can restore ({}). Commit \
+                     them, stash them (`git stash -u`), or choose the rescue-branch strategy.",
+                    destroyed.len(),
+                    list(&destroyed)
+                ))
+            }
+            Some(snapshot) => risks.push(Risk {
+                level: "warn",
+                message: format!(
+                    "{} file(s) have uncommitted changes ({}). They are saved in snapshot {} — \
+                     `git restore --source={} -- .` puts them back.",
+                    destroyed.len(),
+                    list(&destroyed),
+                    short_id(snapshot),
+                    snapshot
+                ),
+            }),
+        }
     }
 
     // 6. Untracked files usually survive a reset — but not when the snapshot tracks
     //    the same path. git replaces whatever is on disk there, including deleting
     //    an untracked file to create a directory (or the other way round). Nothing
-    //    about that is included in the backup branch, so it is a refusal.
+    //    about that is included in the backup branch, so it is a refusal — again
+    //    unless a rescue snapshot captured the files themselves.
     let overwritten: Vec<&str> = state
         .dirty
         .iter()
@@ -157,19 +182,37 @@ pub fn assess(
         .map(|f| f.path.as_str())
         .collect();
     if kind.is_destructive() && !overwritten.is_empty() {
-        return Err(format!(
-            "{} untracked file(s) sit at paths that snapshot {} tracks ({}). `git reset --hard` \
-             replaces what is on disk there — including a file where the snapshot has a directory, \
-             or a directory where it has a file — and no backup branch can bring untracked work \
-             back. Move or commit them first, or choose the rescue-branch strategy.",
-            overwritten.len(),
-            short_id(facts.target),
-            list(&overwritten)
-        ));
+        match facts.snapshot {
+            None => {
+                return Err(format!(
+                    "{} untracked file(s) sit at paths that snapshot {} tracks ({}). `git reset --hard` \
+                     replaces what is on disk there — including a file where the snapshot has a directory, \
+                     or a directory where it has a file — and no backup branch can bring untracked work \
+                     back. Move or commit them first, or choose the rescue-branch strategy.",
+                    overwritten.len(),
+                    short_id(facts.target),
+                    list(&overwritten)
+                ))
+            }
+            Some(snapshot) => risks.push(Risk {
+                level: "warn",
+                message: format!(
+                    "{} untracked file(s) sit at paths snapshot {} tracks ({}). They are saved in \
+                     snapshot {} — `git restore --source={} -- .` puts them back.",
+                    overwritten.len(),
+                    short_id(facts.target),
+                    list(&overwritten),
+                    short_id(snapshot),
+                    snapshot
+                ),
+            }),
+        }
     }
 
     // 6a. Untracked files that the snapshot does not touch really do survive. Say it
-    //     plainly rather than leaving it to be discovered.
+    //     plainly rather than leaving it to be discovered. Ignored files count:
+    //     `--ignored=traditional` puts a gitignored `node_modules/` in `dirty`, and
+    //     a hard reset does not touch it when the target tracks nothing there.
     if kind.is_destructive() {
         let survivors: Vec<&str> = state
             .dirty
@@ -182,7 +225,7 @@ pub fn assess(
             risks.push(Risk {
                 level: "info",
                 message: format!(
-                    "{} untracked file(s) such as {} are not touched by this reset and stay on disk.",
+                    "{} untracked or ignored path(s) such as {} are not touched by this reset and stay on disk.",
                     survivors.len(),
                     survivors.first().copied().unwrap_or("")
                 ),
@@ -318,7 +361,17 @@ mod tests {
 
     /// Facts for a reset whose snapshot tracks nothing (the pre-fix situation).
     fn bare<'a>(head: &'a str, target: &'a str, paths: &'a [String]) -> TargetFacts<'a> {
-        TargetFacts { head, target, paths }
+        TargetFacts { head, target, paths, snapshot: None }
+    }
+
+    /// The same facts, but with a rescue snapshot already written.
+    fn rescued<'a>(
+        head: &'a str,
+        target: &'a str,
+        paths: &'a [String],
+        snapshot: &'a str,
+    ) -> TargetFacts<'a> {
+        TargetFacts { head, target, paths, snapshot: Some(snapshot) }
     }
 
     fn tree(paths: &[&str]) -> Vec<String> {
@@ -376,6 +429,100 @@ mod tests {
         assert!(err.contains("notes.md"), "{err}");
         assert!(err.contains("untracked"), "{err}");
         assert!(err.contains("backup"), "the refusal must say why a backup does not help: {err}");
+    }
+
+    #[test]
+    fn hard_reset_refuses_an_ignored_file_the_target_tracks() {
+        // The second data-loss bug, found in review: a file that was committed, then
+        // untracked and gitignored, is invisible to a plain `git status --porcelain`.
+        // `.env` is the canonical victim. `--ignored=traditional` is what makes this
+        // reach the guard at all — before it, `dirty` was empty and the reset ran.
+        let state = RepoState {
+            dirty: vec![dirty_file("ignored", ".env")],
+            dirty_count: 1,
+            ..clean()
+        };
+        let paths = tree(&[".env", "src/a.ts"]);
+        let err = assess(&state, &ResetKind::Hard, Some("RESET"), &bare(HEAD, TARGET, &paths))
+            .unwrap_err();
+        assert!(err.contains(".env"), "{err}");
+        assert!(
+            err.contains("untracked file"),
+            "an ignored file is untracked as far as the refusal is concerned: {err}"
+        );
+    }
+
+    #[test]
+    fn an_ignored_directory_the_target_does_not_track_does_not_block() {
+        // node_modules/ is ignored, huge, and not in the snapshot. Mentioning it once
+        // is right; refusing on it would make the hard reset unusable in any real repo.
+        let state = RepoState {
+            dirty: vec![dirty_file("ignored", "node_modules/")],
+            dirty_count: 1,
+            ..clean()
+        };
+        let paths = tree(&["src/a.ts"]);
+        let risks = assess(&state, &ResetKind::Hard, Some("RESET"), &bare(HEAD, TARGET, &paths))
+            .unwrap();
+        assert!(risks.iter().any(|r| r.level == "info" && r.message.contains("ignored")), "{risks:?}");
+    }
+
+    #[test]
+    fn a_rescue_snapshot_turns_the_uncommitted_work_refusal_into_a_route_back() {
+        // "Refuse" is safe, but useless when the files were captured first. The guard
+        // must stop blocking and hand back the exact command that restores them.
+        let snapshot = "c0ffee11aa22bb33cc44dd55ee66ff7700112233";
+        let err = assess(&dirty(), &ResetKind::Hard, Some("RESET"), &bare(HEAD, TARGET, &[]))
+            .unwrap_err();
+        assert!(err.contains("no backup can restore"), "{err}");
+
+        let risks = assess(&dirty(), &ResetKind::Hard, Some("RESET"), &rescued(HEAD, TARGET, &[], snapshot))
+            .expect("a snapshot makes the reset recoverable, so it is allowed");
+        let warn = risks.iter().find(|r| r.level == "warn").expect("a warning, not silence");
+        assert!(warn.message.contains("src/a.ts"), "{}", warn.message);
+        assert!(warn.message.contains("c0ffee1"), "the short id of the snapshot: {}", warn.message);
+        assert!(
+            warn.message.contains(&format!("git restore --source={snapshot} -- .")),
+            "the route back must be runnable as printed: {}",
+            warn.message
+        );
+    }
+
+    #[test]
+    fn a_rescue_snapshot_turns_the_untracked_collision_refusal_into_a_route_back() {
+        let snapshot = "c0ffee11aa22bb33cc44dd55ee66ff7700112233";
+        let state = untracked_state(&["notes.md"]);
+        let paths = tree(&["notes.md"]);
+        let err = assess(&state, &ResetKind::Hard, Some("RESET"), &bare(HEAD, TARGET, &paths))
+            .unwrap_err();
+        assert!(err.contains("notes.md"), "{err}");
+
+        let risks =
+            assess(&state, &ResetKind::Hard, Some("RESET"), &rescued(HEAD, TARGET, &paths, snapshot))
+                .expect("captured untracked files are recoverable");
+        let warn = risks.iter().find(|r| r.level == "warn").expect("a warning");
+        assert!(warn.message.contains("notes.md"), "{}", warn.message);
+        assert!(warn.message.contains("git restore --source="), "{}", warn.message);
+    }
+
+    #[test]
+    fn a_snapshot_does_not_disable_the_other_refusals() {
+        // The acknowledgement, the in-progress check and the no-op check are not
+        // about recoverable files, so a snapshot must not soften any of them.
+        let snapshot = "c0ffee11aa22bb33cc44dd55ee66ff7700112233";
+        let facts = rescued(HEAD, TARGET, &[], snapshot);
+        assert!(
+            assess(&dirty(), &ResetKind::Hard, Some("RESET"), &facts).is_ok(),
+            "a snapshot must allow a reset it was written for"
+        );
+        assert!(
+            assess(&dirty(), &ResetKind::Hard, None, &facts).is_err(),
+            "RESET is still required with a snapshot in hand"
+        );
+        let merging = RepoState { in_progress: Some("merge".into()), ..dirty() };
+        assert!(assess(&merging, &ResetKind::Hard, Some("RESET"), &facts).is_err());
+        let same = rescued(TARGET, TARGET, &[], snapshot);
+        assert!(assess(&clean(), &ResetKind::Hard, Some("RESET"), &same).is_err());
     }
 
     #[test]

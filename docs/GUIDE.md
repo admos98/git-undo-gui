@@ -152,7 +152,7 @@ The suite loads the shipped `index.html` into jsdom — it tests the artifact, n
 
 ```bash
 npm install
-npm test              # 123 checks, ~19s
+npm test              # 127 checks, ~19s
 npm test -- parsers   # filter by suite file
 ```
 
@@ -164,7 +164,7 @@ npm test -- parsers   # filter by suite file
 | `tests/features.test.mjs` | action-aware commands, strategy cards + keys, recovery range, undo-push sequence, incident report, oversized paste, empty-state coherence |
 | `tests/integrity.test.mjs` | no CDN/network/`alert`, inlined CSS freshness, CSP present, package.json hygiene, XSS regression, size budget |
 | `tests/confirm-copy.test.mjs` | the confirm dialog describes what the button does — copy in the browser, branch/soft/restore/hard in the desktop shell — and never derives that sentence from the confirmation phrase |
-| `tests/executor.test.mjs` | the web build executes nothing; the desktop UI calls only the four registered commands with matching argument names, strategy strings and confirm phrase; `RESET` gating; refusals surfaced; no bare `--force`; no server/thread/telemetry; dependency budget |
+| `tests/executor.test.mjs` | the web build executes nothing; the desktop UI calls only the four registered commands with matching argument names, strategy strings and confirm phrase; `RESET` gating; refusals surfaced; the rescue snapshot is shown and the file restore the reset discarded; no bare `--force`; no server/thread/telemetry; dependency budget |
 
 CI runs the suite on Node 20 + 22 and fails if `index.html` is stale relative to
 `src/tailwind.css` (`.github/workflows/ci.yml`).
@@ -252,12 +252,38 @@ Each call spawns one short-lived `git` process with `GIT_TERMINAL_PROMPT=0` and
    page really does: a rescue branch "creates a branch, HEAD and files stay put", a soft reset "moves
    HEAD and leaves changes staged", restore "changes file contents and refuses dirty paths", and only
    `--hard` warns that work is discarded.
-4. **Hard reset over uncommitted tracked files?** → refused. Commit or stash first. Untracked
-   files do not block (they survive a reset), and they are listed so you can see that.
+4. **Hard reset over uncommitted or ignored files?** The working tree is captured into a rescue
+   snapshot first (see below). If that capture succeeds, the reset is allowed and the response
+   carries the exact `git restore --source=<snapshot> -- .` line; if it fails, this is a refusal.
+   Untracked files the target does not track never block — they survive a reset, and they are listed
+   so you can see that.
 5. **Then** a `backup-before-recovery` branch is created at the pre-reset HEAD, and every
    success response carries an `undo` line that walks you back to it. The rescue-branch strategy is
    the exception: it writes `rescue-<hash>` and moves nothing, so it needs no second branch — the
    dialog says which of the two you get instead of promising a backup in every case.
+
+**Two safety nets, because they hold different things.** `backup-before-recovery` holds *commits*;
+it cannot hold a file you never committed. So before a destructive reset the working tree is also
+captured into an unreferenced commit — every at-risk tracked edit, plus any ignored file sitting
+where the target snapshot has content. That is built the way `git stash` builds one internally, with
+a throwaway `GIT_INDEX_FILE` so your real staging area is never touched:
+`read-tree HEAD` → `add -A -f -- <paths>` → `write-tree` → `commit-tree`. `git stash create` is not
+used because it reads `-u` as the stash *message* and refuses outright when the only dirty files are
+ignored ones — which is precisely the `.env` case this exists for. Nothing is written to a ref, so
+the snapshot never appears in `git log`, `git branch`, or your editor's source-control panel; it is
+reachable by id, and the response tells you the id.
+
+The ordering is the compromise worth naming: the snapshot is written **before** the guard runs,
+because the guard has to know whether one exists. A refusal that happens afterwards leaves an
+unreferenced commit behind. It is inert and gets garbage-collected, but it is not nothing, and a
+cleaner design would gather facts, decide, then capture — which is impossible while the decision
+depends on the capture.
+
+The second compromise is durability. The snapshot is an unreachable commit, so it survives on
+`gc.pruneExpire` — two weeks by default — and `git gc --prune=now` or `git prune` will drop it.
+Giving it a ref would fix that and cost a visible branch in every repository the app touches, so it
+does not get one. It is designed to cover the minutes after a mistaken reset, not a month of
+archival; `backup-before-recovery` is the durable half of the pair.
 
 **The stale-backup trap.** That branch is idempotent: it is created once and never moved, so after
 a second reset it may hold last month's HEAD while its name still promises "before *this*
@@ -321,7 +347,7 @@ not supported.
 
 | Artifact | Size | Verified |
 |---|---|---|
-| `index.html` (web build) | 200 KB / **49 KB gzip** | measured |
+| `index.html` (web build) | 207 KB / **52 KB gzip** | measured |
 | Runtime dependencies | **0** | measured |
 | Network calls at runtime | **0** | measured |
 | Desktop binary (Tauri v2, `opt-level="s"`, LTO, stripped) | not stated here | CI enforces a **20 MiB budget** on every push; read the actual size from the release artifact |
@@ -391,7 +417,7 @@ The three titlebar dots are real browser controls, not decoration: **red** attem
 ## 🎯 Technical Specifications
 
 - **Architecture**: one `index.html` with inlined CSS + vanilla JS. No framework, no bundler at runtime.
-- **Size**: 200 KB raw / 49 KB gzip — about 31 KB of that is Tailwind CSS compiled ahead of time and
+- **Size**: 207 KB raw / 52 KB gzip — about 31 KB of that is Tailwind CSS compiled ahead of time and
   inlined. (The badge above is *generated* from the file by `npm run badge` and verified by
   `tests/integrity.test.mjs`, so it cannot drift from the artifact again.)
 - **Network**: **none**. No `<script src>`, no `@import`, no fonts, no analytics. Works fully offline from `file://`.

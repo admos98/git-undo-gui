@@ -189,6 +189,66 @@ suite.test("argument names match the Rust signatures", async () => {
   return problems.length === 0 || problems.join("; ");
 });
 
+suite.test("a snapshot in the response is shown, with the command that restores it", async () => {
+  // The reset is only allowed to discard uncommitted work because the snapshot holds
+  // it. If the UI dropped the snapshot from the result, the user would be told the
+  // reset succeeded with no way back — the report is the safety net's only surface.
+  const h = await bootDesktop((cmd) => {
+    if (cmd !== "git_reset") return defaultResponse(cmd);
+    return {
+      ok: true,
+      command: "git reset --hard a43c821",
+      message: "Branch and working tree are now at a43c821.",
+      now_at: "a43c821",
+      undo: "git reset --hard backup-before-recovery",
+      risks: [],
+      previous_head: "b11b22c",
+      backup_branch: "backup-before-recovery",
+      backup: { branch: "backup-before-recovery", commit: "b11b22c", date: "2026-11-10", created: true, covers_head: false },
+      snapshot: {
+        commit: "c0ffee11aa22bb33cc44dd55ee66ff7700112233",
+        restore: "git restore --source=c0ffee11aa22bb33cc44dd55ee66ff7700112233 -- .",
+      },
+    };
+  });
+  await h.app("loadRepository('/home/dev/project')");
+  await runReset(h, { index: 1, strategy: "hard", phrase: "RESET" });
+
+  const shown = h.d.getElementById("modal-result").innerHTML;
+  if (!/Uncommitted work saved/.test(shown)) return `the snapshot is not reported: ${shown.slice(0, 400)}`;
+  if (!/c0ffee1/.test(shown)) return "the snapshot's short id is not shown";
+  if (!/git restore --source=c0ffee1/.test(shown)) return "the restore command is not shown — the id alone is not an instruction";
+  return true;
+});
+
+suite.test("a reset with no snapshot says nothing about uncommitted work", async () => {
+  // Silence has to be distinguishable from "saved but not shown": a clean-tree reset
+  // must not imply a snapshot exists.
+  const h = await bootDesktop((cmd) => {
+    if (cmd !== "git_reset") return defaultResponse(cmd);
+    return {
+      ok: true,
+      command: "git reset --soft a43c821",
+      message: "HEAD moved to a43c821.",
+      now_at: "a43c821",
+      undo: "git reset --soft b11b22c",
+      risks: [],
+      previous_head: "b11b22c",
+      backup_branch: null,
+      backup: null,
+      snapshot: null,
+    };
+  });
+  await h.app("loadRepository('/home/dev/project')");
+  await runReset(h, { index: 1, strategy: "soft" });
+
+  const shown = h.d.getElementById("modal-result").innerHTML;
+  if (/Uncommitted work saved/.test(shown)) return `nothing was captured, but the UI claims otherwise: ${shown.slice(0, 400)}`;
+  // The report must still have rendered, or the assertion above proves nothing.
+  if (!/HEAD moved to a43c821/.test(shown)) return `the result box did not render: ${shown.slice(0, 400)}`;
+  return true;
+});
+
 suite.test("strategy strings are exactly branch|soft|files|hard", async () => {
   const guard = rust("logic/src/guard.rs");
   const kinds = [...guard.matchAll(/"([a-z]+)"\s*=>\s*(?:Some\()?ResetKind::/g)].map((m) => m[1]);

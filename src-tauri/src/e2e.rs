@@ -126,6 +126,16 @@ impl Scratch {
         std::fs::read_to_string(self.path.join(name)).unwrap_or_default()
     }
 
+    /// Read a path out of a commit, without touching the working tree. Used to prove
+    /// a rescue snapshot really holds the discarded content.
+    ///
+    /// `Scratch::git` returns stdout with surrounding whitespace trimmed by the
+    /// harness, so the comparison drops the trailing newline too. Assertions against
+    /// this are about the *content* being preserved, not about byte-exact EOF.
+    fn contents_at(&self, rev: &str, name: &str) -> String {
+        self.git(&["show", &format!("{rev}:{name}")])
+    }
+
     fn path(&self) -> &Path {
         &self.path
     }
@@ -184,23 +194,131 @@ fn branch_strategy_never_moves_head() {
 }
 
 #[test]
-fn hard_reset_refuses_uncommitted_work_and_changes_nothing() {
+fn hard_reset_saves_uncommitted_work_before_discarding_it() {
     let Some(scratch) = Scratch::new() else { return };
     let (first, second) = two_commits(&scratch);
 
-    // Uncommitted edit to a tracked file: git cannot get this back.
+    // An uncommitted edit to a tracked file. `git reset --hard` destroys it and no
+    // branch can bring it back — which is why this used to be a flat refusal. The
+    // snapshot makes the work recoverable, so the reset is allowed and the report
+    // says exactly how to get the edit back.
     scratch.write("notes.md", "work in progress\n");
 
-    let err = service::reset(scratch.path(), &first, "hard", Some("RESET"))
-        .expect_err("must refuse to discard uncommitted work");
+    let outcome = service::reset(scratch.path(), &first, "hard", Some("RESET"))
+        .expect("a snapshot makes the discard recoverable, so the reset runs");
 
-    assert!(matches!(err, crate::GitError::Refused { .. }), "{err:?}");
-    assert!(err.to_string().contains("notes.md"), "{err}");
-    assert_eq!(scratch.head(), second, "a refusal must not move HEAD");
-    assert_eq!(scratch.contents("notes.md"), "work in progress\n");
+    assert_eq!(scratch.head(), first, "the reset still moves HEAD");
+    assert_eq!(scratch.contents("notes.md"), "first\n", "the working tree is rewritten");
+
+    let saved = outcome.snapshot.expect("the report must carry the snapshot");
+    assert_eq!(
+        scratch.contents_at(&saved.commit, "notes.md"),
+        "work in progress",
+        "the snapshot holds the discarded edit"
+    );
     assert!(
-        !scratch.has_branch("backup-before-recovery"),
-        "a refusal must not even create the backup branch"
+        saved.restore.contains(&saved.commit) && saved.restore.contains("restore"),
+        "the printed route back must be runnable: {}",
+        saved.restore
+    );
+
+    // Following the printed command really does restore the work — an undo hint is
+    // only worth printing if it works, so this is executed rather than inspected.
+    scratch.git(&["restore", &format!("--source={}", saved.commit), "--", "."]);
+    assert_eq!(scratch.contents("notes.md"), "work in progress\n");
+
+    // The backup branch still exists for the commits, and must not be confused with
+    // the snapshot: it is what recovers history, not the working tree.
+    assert!(scratch.has_branch("backup-before-recovery"));
+    assert_eq!(outcome.previous_head, &second[..7.min(second.len())]);
+}
+
+#[test]
+fn a_failed_reset_leaves_no_snapshot_and_no_backup() {
+    // The snapshot is written before the guard runs, so a refusal that comes after it
+    // must not leave the repo looking like a reset happened. Anything resembling a
+    // safety net that did not get used is worse than none.
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, _second) = two_commits(&scratch);
+    scratch.write("notes.md", "work in progress\n");
+
+    // No acknowledgement phrase: refused before anything moves, but *after* the
+    // snapshot was written — so this proves the snapshot alone does not authorise it.
+    let err = service::reset(scratch.path(), &first, "hard", None)
+        .expect_err("RESET is still required while holding a snapshot");
+    assert!(matches!(err, crate::GitError::Refused { .. }), "{err:?}");
+    assert!(!scratch.has_branch("backup-before-recovery"));
+    assert_eq!(scratch.contents("notes.md"), "work in progress\n");
+}
+
+#[test]
+fn hard_reset_refuses_ignored_files_the_target_tracks() {
+    // The `.env` bug: a file that was committed, then untracked and gitignored, is
+    // invisible to a plain `git status --porcelain`. Reproduced end to end because
+    // the parser alone cannot prove `--ignored=traditional` was actually passed.
+    let Some(scratch) = Scratch::new() else { return };
+    scratch.write("secret.txt", "committed default\n");
+    scratch.write("keep.txt", "keep\n");
+    scratch.git(&["add", "secret.txt", "keep.txt"]);
+    scratch.git(&["commit", "--quiet", "-m", "one"]);
+    let with_secret = scratch.head();
+
+    scratch.git(&["rm", "--quiet", "--cached", "secret.txt"]);
+    scratch.write(".gitignore", "secret.txt\n");
+    scratch.git(&["add", ".gitignore"]);
+    scratch.git(&["commit", "--quiet", "-m", "untrack and ignore"]);
+    let without_secret = scratch.head();
+
+    // The real local value — the one nobody wants overwritten. Before the fix this
+    // was replaced by "committed default" and reported as a clean-tree reset.
+    scratch.write("secret.txt", "REAL_LOCAL_SECRET\n");
+
+    let outcome = service::reset(scratch.path(), &with_secret, "hard", Some("RESET"))
+        .expect("an ignored file is now captured instead of being invisible");
+    assert_eq!(scratch.head(), with_secret, "the reset went through");
+
+    // The guard not refusing is only acceptable because the value was saved first.
+    let saved = outcome.snapshot.expect("the ignored file must be in the snapshot");
+    assert_eq!(
+        scratch.contents_at(&saved.commit, "secret.txt"),
+        "REAL_LOCAL_SECRET",
+        "the snapshot holds the ignored file's real content"
+    );
+
+    // And the printed command puts it back, which is the only thing that makes
+    // allowing the reset defensible.
+    scratch.git(&["restore", &format!("--source={}", saved.commit), "--", "."]);
+    assert_eq!(scratch.contents("secret.txt"), "REAL_LOCAL_SECRET\n");
+    assert_eq!(scratch.head(), with_secret, "restoring files never moves HEAD");
+
+    // `keep.txt` was untouched throughout: no over-collection.
+    assert_eq!(scratch.contents("keep.txt"), "keep\n");
+    let _ = without_secret;
+}
+
+#[test]
+fn an_ignored_file_the_target_does_not_track_does_not_block() {
+    // node_modules/ and friends are ignored and enormous. Refusing on them would make
+    // the hard reset unusable; the entry exists only so the guard can see `.env`-style
+    // files, and it must not turn every repo into a refusal.
+    let Some(scratch) = Scratch::new() else { return };
+    let (first, _second) = two_commits(&scratch);
+    scratch.write(".gitignore", "node_modules/\n");
+    scratch.git(&["add", ".gitignore"]);
+    scratch.git(&["commit", "--quiet", "-m", "ignore deps"]);
+    std::fs::create_dir_all(scratch.path().join("node_modules/pkg")).unwrap();
+    scratch.write_nested("node_modules/pkg/index.js", "module.exports = 1;\n");
+
+    let outcome = service::reset(scratch.path(), &first, "hard", Some("RESET"))
+        .expect("an ignored directory the target does not track is not a reason to refuse");
+    assert_eq!(scratch.head(), first);
+    assert!(
+        scratch.path().join("node_modules/pkg/index.js").exists(),
+        "the ignored directory is still on disk"
+    );
+    assert!(
+        outcome.snapshot.is_none(),
+        "nothing was captured, because a reset cannot touch those paths"
     );
 }
 

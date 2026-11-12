@@ -10,8 +10,10 @@ use crate::git::Git;
 use git_undo_logic::error::{GitError, GitResult};
 use git_undo_logic::guard::{assess, ResetKind, Risk, TargetFacts};
 use git_undo_logic::hash::is_valid_hash;
+use git_undo_logic::paths::overlaps_tree;
 use git_undo_logic::state::{
-    detect_in_progress, parse_porcelain_z, parse_unpushed_count, unpushed_rev_list_args, RepoState,
+    detect_in_progress, is_untracked, parse_porcelain_z, parse_unpushed_count,
+    unpushed_rev_list_args, DirtyFile, RepoState,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -40,6 +42,19 @@ pub struct ResetOutcome {
     /// Kept for compatibility; `backup` carries the detail the UI displays.
     pub backup_branch: Option<String>,
     pub backup: Option<BackupReport>,
+    /// Commit holding the uncommitted work the reset discarded, when there was any.
+    /// `None` means nothing was captured — either the tree was clean in that sense,
+    /// or the strategy does not destroy working-tree content.
+    pub snapshot: Option<SnapshotReport>,
+}
+
+/// The rescue snapshot, as the UI needs to describe it.
+#[derive(Debug, Clone, Serialize)]
+pub struct SnapshotReport {
+    /// Full commit id, so `git restore --source=<commit>` works as printed.
+    pub commit: String,
+    /// The one command that puts the captured work back.
+    pub restore: String,
 }
 
 /// What the UI needs to describe the safety net honestly.
@@ -71,11 +86,25 @@ pub fn read_state(root: &Path) -> GitResult<RepoState> {
     // `-z` keeps every path literal: spaces, quotes and non-ASCII bytes are not
     // C-quoted, so the guard compares the same spelling `ls-tree -z` gave it.
     // `core.quotepath=false` is kept for the diff/log callers and is harmless.
+    //
+    // `--ignored=traditional` is load-bearing, not cosmetic. A file that was
+    // committed and later untracked-then-gitignored (`.env`, a local config, a
+    // build secret) is *invisible* to a plain `git status --porcelain`: it reports
+    // nothing at all, so the guard saw a clean tree and permitted the reset that
+    // overwrote it. `traditional` lists one entry per ignored directory rather than
+    // one per file, so a gitignored `node_modules/` costs a single line.
     let dirty = parse_porcelain_z(
-        &git.run(&["-c", "core.quotepath=false", "status", "--porcelain=v1", "-z"])
-            .map_err(|detail| GitError::Internal {
-                detail: format!("`git status` failed, so the working tree could not be read: {detail}"),
-            })?,
+        &git.run(&[
+            "-c",
+            "core.quotepath=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--ignored=traditional",
+        ])
+        .map_err(|detail| GitError::Internal {
+            detail: format!("`git status` failed, so the working tree could not be read: {detail}"),
+        })?,
     );
     let dirty_count = dirty.len();
 
@@ -252,6 +281,104 @@ pub fn create_backup(git: &Git) -> GitResult<Backup> {
     })
 }
 
+/// Capture the working-tree content a destructive reset is about to discard.
+///
+/// `git stash create` is the obvious candidate and does not work here: it refuses
+/// to stash anything when the tree only contains ignored files, and its `-u` is
+/// silently read as the stash *message*, so untracked files are never included.
+/// The `.env` case this exists for is exactly an ignored file.
+///
+/// So the snapshot is built the way `git stash` builds one internally, but without
+/// touching the real index or the working tree:
+///
+///   1. `GIT_INDEX_FILE` points at a throwaway index, so the user's staging area is
+///      never read or written.
+///   2. `read-tree HEAD` seeds that index with the committed state.
+///   3. `add -A -f -- <paths>` stages the *disk* content of the at-risk paths,
+///      `-f` overriding `.gitignore` (which is the whole point) and `-A` recording
+///      deletions so a deleted file stays deleted rather than being resurrected.
+///   4. `write-tree` + `commit-tree` produce an unreferenced commit — no branch, no
+///      ref, nothing that appears in `git log`.
+///
+/// `git restore --source=<id> -- .` then puts the exact pre-reset working tree
+/// back, tracked and ignored files alike.
+///
+/// Durability caveat, stated because it is a real one: the commit is unreachable, so
+/// it survives on `gc.pruneExpire` (two weeks by default) rather than on a reflog
+/// entry. Anything that prunes hard — `git gc --prune=now`, `git prune` — will drop
+/// it. A ref would fix that and cost a visible branch in every repository the app
+/// touches, which is the trade this deliberately refuses to make: the snapshot
+/// covers the minutes after a mistaken reset, not a month of archival.
+///
+/// Returns `None` when there is nothing worth capturing — a clean tree in both
+/// senses — so the guard still refuses rather than claiming a rescue it did not make.
+fn create_snapshot(
+    git: &Git,
+    dirty: &[DirtyFile],
+    target_paths: &[String],
+) -> GitResult<Option<String>> {
+    // Only paths the reset can actually destroy or overwrite: tracked-file edits, and
+    // ignored/untracked entries that sit where the target snapshot has content. This
+    // filter is load-bearing, not tidiness — `--ignored=traditional` reports a
+    // gitignored `node_modules/`, and `git add -f node_modules/` would copy an entire
+    // dependency tree into git objects to protect files the reset never touches.
+    let mut candidates: Vec<&str> = dirty
+        .iter()
+        .filter(|f| !matches!(f.status.as_str(), "untracked"))
+        .filter(|f| !is_untracked(f) || overlaps_tree(&f.path, target_paths))
+        .map(|f| f.path.as_str())
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    // Deterministic order: `write-tree` output is compared in tests by content, but a
+    // stable index keeps the resulting tree id reproducible for the same input.
+    candidates.sort_unstable();
+    candidates.dedup();
+
+    // Resolve the real git dir: `.git` is a file in a worktree and lives elsewhere in
+    // a submodule, so `root.join(".git")` is wrong for both.
+    let git_dir = git
+        .probe(&["rev-parse", "--absolute-git-dir"])
+        .map(|s| PathBuf::from(s.trim()))
+        .unwrap_or_else(|| git.root().join(".git"));
+    let index_path = git_dir.join("gu-snapshot.index");
+    let index_env = index_path.to_string_lossy().to_string();
+    // A stale index from a crashed run would silently contribute its contents.
+    let _ = std::fs::remove_file(&index_path);
+
+    let seed = git.run_with_index(&["read-tree", "HEAD"], &index_env);
+    if let Err(why) = seed {
+        let _ = std::fs::remove_file(&index_path);
+        return Err(why);
+    }
+
+    // `-f` so `.gitignore` cannot exclude the file we are trying to save; `--` and a
+    // literal path list so nothing is interpreted as a flag or a pathspec magic.
+    let mut add_args: Vec<&str> = vec!["add", "-A", "-f", "--"];
+    add_args.extend(candidates.iter().copied());
+    let added = git.run_with_index(&add_args, &index_env).and_then(|_| {
+        let tree = git.run_with_index(&["write-tree"], &index_env)?;
+        Ok(tree.trim().to_string())
+    });
+    let _ = std::fs::remove_file(&index_path);
+
+    let tree = added?;
+    // Nothing staged relative to HEAD means there was no uncommitted content to keep.
+    let head_tree = git
+        .probe(&["rev-parse", "HEAD^{tree}"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if tree == head_tree {
+        return Ok(None);
+    }
+
+    let message = "git-undo-gui rescue snapshot: uncommitted work before a reset";
+    let commit = git.run(&["commit-tree", &tree, "-p", "HEAD", "-m", message])?;
+    let id = commit.trim().to_string();
+    Ok(if id.is_empty() { None } else { Some(id) })
+}
+
 /// Every path a snapshot tracks, recursively.
 ///
 /// This is the list the working tree is rewritten from — by `reset --hard` and by
@@ -309,6 +436,20 @@ fn undo_hint(kind: &ResetKind, backup: &Option<Backup>, previous_head: &str) -> 
     }
 }
 
+/// How to get back the *uncommitted* work a hard reset just discarded.
+///
+/// Produced only when a rescue snapshot was actually written, so it is never a
+/// promise the app has not already kept. Distinct from `undo_hint`: a `--hard`
+/// back to the previous commit restores tracked history and nothing else, so a
+/// single sentence could not cover both.
+fn snapshot_hint(snapshot: &Option<String>) -> Option<String> {
+    snapshot.as_ref().map(|id| {
+        format!(
+            "git restore --source={id} -- .   # puts the uncommitted work back; does not move HEAD"
+        )
+    })
+}
+
 pub fn reset(
     root: &Path,
     target: &str,
@@ -346,7 +487,39 @@ pub fn reset(
     // What the working tree would be rewritten from: untracked files on these
     // paths are not safe just because git calls them untracked.
     let target_paths = target_tree_paths(&git, &target_full)?;
-    let facts = TargetFacts { head: &head_full, target: &target_full, paths: &target_paths };
+
+    // ---- snapshot: capture uncommitted work *before* asking the guard ----
+    //
+    // The guard must be told whether a snapshot exists, and the snapshot must be
+    // written before the guard can approve anything, so it belongs here — after the
+    // facts are gathered and before `assess`. Only a destructive strategy needs it:
+    // `branch` moves nothing, `soft` keeps the working tree, and `files` refuses on
+    // edits rather than overwriting them.
+    //
+    // A failure to snapshot is not fatal. It degrades to the old behaviour — the
+    // guard refuses — which is the safe direction; the reason is carried into the
+    // refusal so the user is not told "commit your work" when the real problem was
+    // a full disk.
+    let snapshot = if kind.is_destructive() {
+        match create_snapshot(&git, &state.dirty, &target_paths) {
+            Ok(id) => id,
+            Err(why) => {
+                return Err(GitError::internal(format!(
+                    "Could not save a rescue snapshot of your uncommitted work, so the reset was \
+                     not attempted: {why}"
+                )))
+            }
+        }
+    } else {
+        None
+    };
+
+    let facts = TargetFacts {
+        head: &head_full,
+        target: &target_full,
+        paths: &target_paths,
+        snapshot: snapshot.as_deref(),
+    };
 
     // ---- guard: a refusal happens before anything is written ----
     let risks = assess(&state, &kind, ack, &facts).map_err(GitError::refused)?;
@@ -397,6 +570,10 @@ pub fn reset(
     // promised would stay there. Running `--hard` on it would delete exactly the
     // work the dialog said was safe.
     let undo = undo_hint(&kind, &backup, &previous_head);
+    let snapshot = snapshot.map(|commit| SnapshotReport {
+        restore: snapshot_hint(&Some(commit.clone())).unwrap_or_default(),
+        commit,
+    });
 
     Ok(ResetOutcome {
         report: OpReport {
@@ -419,6 +596,7 @@ pub fn reset(
             created: b.created,
             covers_head: b.covers_head,
         }),
+        snapshot,
     })
 }
 

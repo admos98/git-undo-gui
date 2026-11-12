@@ -51,4 +51,9 @@ tour-*.png
 
 # Rust / Tauri build artifacts
 src-tauri/target/
+# The workspace has a second, nested crate. `src-tauri/target/` alone did not cover
+# it, so `git add -A` staged ~250 build artifacts the first time this crate was built.
+src-tauri/logic/target/
+src-tauri/*/target/
+src-tauri/logic/Cargo.lock
 src-tauri/gen/

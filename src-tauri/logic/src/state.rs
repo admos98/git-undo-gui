@@ -153,6 +153,11 @@ pub fn detect_in_progress(has_marker: impl Fn(&str) -> bool) -> Option<String> {
         .map(|(_, name)| (*name).to_string())
 }
 
+/// Is this an entry git is ignoring (`.gitignore`, `core.excludesFile`, …)?
+pub fn is_ignored(file: &DirtyFile) -> bool {
+    file.status == "ignored"
+}
+
 /// Is this entry something git is not tracking at all?
 pub fn is_untracked(file: &DirtyFile) -> bool {
     matches!(file.status.as_str(), "untracked" | "ignored")

@@ -56,6 +56,21 @@ impl Git {
         run_raw(&self.root, args).ok()
     }
 
+    /// Run git against an alternate index file.
+    ///
+    /// `GIT_INDEX_FILE` is how the rescue snapshot reads and writes the working tree
+    /// without disturbing the user's staging area: `git stash create` cannot do it
+    /// (it ignores `-u` and refuses a tree of only-ignored files), so the snapshot is
+    /// assembled in a throwaway index and the real one is never opened.
+    pub fn run_with_index(&self, args: &[&str], index_file: &str) -> GitResult<String> {
+        run_raw_with(&self.root, args, &[("GIT_INDEX_FILE", index_file)]).map_err(|detail| {
+            GitError::CommandFailed {
+                command: format!("git {}", args.join(" ")),
+                detail,
+            }
+        })
+    }
+
     /// Resolve a revision to the **full** commit id, or `None` when it is not a
     /// commit in this repository.
     ///
@@ -79,15 +94,30 @@ impl Git {
 }
 
 fn run_raw(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    run_raw_with(dir, args, &[])
+}
+
+/// The one place a git process is spawned. `extra_env` lets a caller add
+/// `GIT_INDEX_FILE` without a second copy of the spawn logic — and without a second
+/// chance to forget `GIT_TERMINAL_PROMPT=0`.
+fn run_raw_with(
+    dir: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> Result<String, String> {
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(dir)
         // Never let git try to talk to a network or block on a prompt.
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("LC_ALL", "C")
-        .output()
-        .map_err(|e| format!("{e}"))?;
+        .env("LC_ALL", "C");
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+
+    let output = command.output().map_err(|e| format!("{e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

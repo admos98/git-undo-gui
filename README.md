@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/admos98/git-undo-gui?style=flat&logo=github&label=stars)](https://github.com/admos98/git-undo-gui/stargazers)
-[![Bundle size](https://img.shields.io/badge/index.html-207%20KB%20raw%20%C2%B7%2051%20KB%20gzip-7dcfff)](index.html)
+[![Bundle size](https://img.shields.io/badge/index.html-207%20KB%20raw%20%C2%B7%2052%20KB%20gzip-7dcfff)](index.html)
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
@@ -48,9 +48,19 @@ what `backup-before-recovery` holds.
 
 **Guard.** A pure function — no git calls, no I/O, no clock — in
 [`src-tauri/logic/src/guard.rs`](src-tauri/logic/src/guard.rs), returning a refusal or a list of
-risks. Being pure, its rules are unit-tested without a repository. It refuses four things: an
-operation in progress (merge, rebase, cherry-pick, bisect); a hard reset that would discard
-uncommitted changes to tracked files; one without the phrase typed; and a reset with nothing to do.
+risks. Being pure, its rules are unit-tested without a repository. It refuses: an operation in
+progress (merge, rebase, cherry-pick, bisect); a reset with nothing to do; a hard reset without the
+phrase typed; and a hard reset that would discard uncommitted work or overwrite an untracked or
+ignored file the target snapshot tracks.
+
+**Snapshot.** Uncommitted work is not in any commit, so a branch cannot hold it. Before a destructive
+reset the working tree is captured into an unreferenced commit — tracked edits and ignored files
+alike — and the report prints the one command that puts it back:
+`git restore --source=<snapshot> -- .`. This is built with a throwaway `GIT_INDEX_FILE`, the way
+`git stash` builds one internally: `git stash create` cannot do it, because it reads `-u` as the
+stash *message* and refuses outright when the only dirty files are ignored ones. When the snapshot
+succeeds the two discard rules above become warnings carrying that command; when it cannot be
+written, they stay refusals.
 
 **Back up.** A `backup-before-recovery` branch is created at the pre-reset HEAD before anything moves.
 The one exception is the rescue-branch strategy, which *is* the backup: it writes its own
@@ -102,7 +112,7 @@ branch creation `switch -c` — not a blind reset for all three.
 ## Development
 
 ```bash
-npm install && npm test    # 123 checks, jsdom against the shipped index.html
+npm install && npm test    # 127 checks, jsdom against the shipped index.html
 npm run dev                # local server, rebuilds CSS
 npm run build              # regenerates index.html, the size badge, the embedded copy
 npm run badge              # re-measure the size badge only
