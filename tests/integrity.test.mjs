@@ -83,6 +83,34 @@ suite.test("LICENSE is MIT and README makes no fake claims", () => {
   return true;
 });
 
+suite.test("the README never promises that uncommitted work is recoverable", () => {
+  // The opening used to say "It is still in the reflog, so the work is recoverable"
+  // without qualification. That is false for the case people actually arrive with:
+  // an unstaged edit or an untracked file never became an object, so `reset --hard`
+  // deletes the only copy and the reflog cannot name it. This is a trust claim, not
+  // a style rule — a tool that oversells recovery is worse than no tool, because the
+  // user stops looking for the file elsewhere while it is still recoverable by other
+  // means (editor history, backups, a file-recovery tool).
+  const readme = readFileSync(resolve(ROOT, "README.md"), "utf8");
+  const intro = readme.split("## Try it")[0];
+
+  // The unqualified promise must be gone.
+  if (/It is still in the reflog, so the work\s+is recoverable/.test(readme)) {
+    return "the intro still claims anything lost to reset --hard is recoverable";
+  }
+  // And the correction must be present, in the part of the README people read first.
+  if (!/never committed is not in it|reflog only knows about commits/i.test(intro)) {
+    return "the intro does not say that uncommitted work is outside the reflog";
+  }
+  // The Limits section must carry the same caveat, since that is where a sceptical
+  // reader goes to check the claims made above it.
+  const limits = readme.slice(readme.indexOf("## Limits"));
+  if (!/Uncommitted work is outside the reflog/.test(limits)) {
+    return "the Limits section does not repeat the uncommitted-work caveat";
+  }
+  return true;
+});
+
 suite.test("HTML is a single valid document with one h1", async () => {
   const { d } = await boot({ "git-undo-seen": "1", "git-undo-tour-seen": "1" });
   const h1s = d.querySelectorAll("h1").length;

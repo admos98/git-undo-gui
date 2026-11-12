@@ -6,10 +6,15 @@
 [![Offline](https://img.shields.io/badge/offline-100%25%2C%20no%20CDN-9ece6a)](#technical-specifications)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](index.html)
 
-You ran `git reset --hard` and something you needed is gone. It is still in the reflog, so the work
-is recoverable — but at 2am you are reading forty hashes and guessing, and that is how the second
-mistake happens. This turns the reflog into a timeline you can read, and hands you the one command
-that puts things back.
+You ran `git reset --hard` and something you needed is gone. If it was ever committed, it is still
+in the reflog and this can help you find it — but at 2am you are reading forty hashes and guessing,
+and that is how the second mistake happens. This turns the reflog into a timeline you can read, and
+hands you the one command that puts things back.
+
+**The reflog only knows about commits.** Work that was never committed is not in it: edits you had
+not staged, and files git was not tracking at all. `git reset --hard` deletes those outright, and
+they are outside the reflog's reach — this tool included. Check `git status` before any destructive
+command, because that list is what a reset takes with it.
 
 ![git-undo-gui demo](docs/demo.gif)
 ![git-undo-gui screenshot](docs/screenshot.png)
@@ -136,6 +141,17 @@ opens by double-click with no install and no permissions; for real per-file diff
 A backup branch keeps unpushed commits alive, but not on your branch — a safety net, not a time
 machine, and no replacement for reading what you are about to run. The rescue-branch strategy creates
 `rescue-<hash>` instead and takes no backup, because nothing moves that would need one.
+
+Two things this cannot do, both structural rather than unfinished:
+
+- **Uncommitted work is outside the reflog.** A commit is an object before it is a history entry, so
+  the reflog can always name it again. An unstaged edit or an untracked file never became an object,
+  so `git reset --hard` deletes the only copy and no amount of history reading brings it back. The
+  browser build cannot help here at all; the desktop build captures those files into a snapshot
+  first (see *The safety model*), which is why it exists.
+- **The reflog expires.** Reachable entries go after 90 days, unreachable ones after 30, by default
+  (`gc.reflogExpire` / `gc.reflogExpireUnreachable`). A commit you dropped three months ago and
+  never revisited may already have been garbage-collected.
 
 One file of 207 KB raw in total is a deliberate tradeoff: no build step, no dependency to audit, no
 bundle to trust — and 3,700 lines in one place, which the jsdom suite makes safe to keep and does

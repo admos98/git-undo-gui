@@ -302,6 +302,10 @@ restores the work when followed.
 
 ### What it does **not** protect you from
 
+- **Work you never committed.** An unstaged edit or an untracked file never becomes a git object,
+  so the reflog cannot name it and no history reading brings it back. `reset --hard` deletes the only
+  copy. The browser build cannot help at all; the desktop build captures those files into a snapshot
+  before it runs, which is the single biggest reason the desktop build exists. Run `git status` first.
 - **Unpushed commits.** The backup branch keeps them alive, but a `reset --hard` genuinely
   moves them off the branch. The UI shows the count before you confirm; read it.
 - **A backup branch from an earlier session.** The name is fixed and idempotent, so a second
