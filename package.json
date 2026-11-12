@@ -1,6 +1,6 @@
 {
   "name": "git-undo-gui",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Visual git undo button: reads `git reflog`, previews word-level diffs, and generates safe undo commands. Single-file, offline-first.",
   "type": "module",

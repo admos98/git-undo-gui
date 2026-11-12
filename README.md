@@ -38,6 +38,10 @@ The desktop build in `src-tauri/` is optional and **experimental**: it can apply
 four-command, guard-checked bridge, but there are no signed installers and it has not had a real
 click-through release. Treat the browser build as the product today.
 
+Version tags cover the static artifact only — `index.html`, `LICENSE` and `README.md` in a tarball.
+No desktop bundle is attached to a release, because the Tauri jobs that would build one are gated
+behind a repository variable and none have been signed.
+
 ## The safety model
 
 This is the part worth reading. A reset is destructive, so it runs as four ordered steps and stops

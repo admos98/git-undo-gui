@@ -52,7 +52,19 @@ suite.test("inlined CSS is not stale (rebuild matches across platforms)", () => 
 suite.test("package.json is minimal and correctly named", () => {
   const problems = [];
   if (pkg.name !== "git-undo-gui") problems.push("name " + pkg.name);
-  if (pkg.version !== "1.0.0") problems.push("version " + pkg.version);
+
+  // The version is not pinned to a literal. It used to be — `1.0.0`, set before the
+  // first release existed — which both contradicted the README ("not had a real
+  // click-through release") and meant the tag, package.json and tauri.conf.json
+  // could disagree with nothing catching it. Assert the shape and the *agreement*
+  // instead, so the next release bumps one number in three files and the suite says
+  // so if it misses one.
+  if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) problems.push("version " + pkg.version + " is not semver");
+  const tauri = JSON.parse(readFileSync(resolve(ROOT, "src-tauri", "tauri.conf.json"), "utf8"));
+  if (tauri.version !== pkg.version) {
+    problems.push(`tauri.conf.json version ${tauri.version} != package.json ${pkg.version}`);
+  }
+
   for (const banned of ["express", "@google/genai", "react", "react-dom", "motion", "lucide-react", "@tailwindcss/vite", "@vitejs/plugin-react"]) {
     if ((pkg.dependencies || {})[banned] || (pkg.devDependencies || {})[banned]) problems.push("banned dep " + banned);
   }
