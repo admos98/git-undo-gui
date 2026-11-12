@@ -112,7 +112,7 @@ branch creation `switch -c` — not a blind reset for all three.
 ## Development
 
 ```bash
-npm install && npm test    # 127 checks, jsdom against the shipped index.html
+npm install && npm test    # 129 checks, jsdom against the shipped index.html
 npm run dev                # local server, rebuilds CSS
 npm run build              # regenerates index.html, the size badge, the embedded copy
 npm run badge              # re-measure the size badge only

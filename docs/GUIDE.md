@@ -152,7 +152,7 @@ The suite loads the shipped `index.html` into jsdom — it tests the artifact, n
 
 ```bash
 npm install
-npm test              # 127 checks, ~19s
+npm test              # 129 checks, ~19s
 npm test -- parsers   # filter by suite file
 ```
 
